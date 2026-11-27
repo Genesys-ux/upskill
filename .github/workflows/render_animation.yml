@@ -91,10 +91,10 @@ jobs:
           path: ~/blender
           key: blender-${{ env.BLENDER_VERSION }}-linux-x64
 
-      - name: Install Blender, Xvfb, Mesa OpenGL & FFmpeg
+      - name: Install Blender, Xvfb, Mesa OpenGL/EGL & FFmpeg
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 ffmpeg
+          sudo apt-get install -y -qq xvfb libegl1 libegl-mesa0 libgbm1 libglx-mesa0 libopengl0 libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 libxrandr2 libxcursor1 libxinerama1 ffmpeg
           if [ ! -x "$HOME/blender/blender" ]; then
             mkdir -p "$HOME/blender"
             curl -fsSL "$BLENDER_URL" | tar -xJ --strip-components=1 -C "$HOME/blender"
@@ -192,10 +192,10 @@ jobs:
           path: ~/blender
           key: blender-${{ env.BLENDER_VERSION }}-linux-x64
 
-      - name: Install Blender, Xvfb, Mesa OpenGL & FFmpeg
+      - name: Install Blender, Xvfb, Mesa OpenGL/EGL & FFmpeg
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 ffmpeg
+          sudo apt-get install -y -qq xvfb libegl1 libegl-mesa0 libgbm1 libglx-mesa0 libopengl0 libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 libxrandr2 libxcursor1 libxinerama1 ffmpeg
           if [ ! -x "$HOME/blender/blender" ]; then
             mkdir -p "$HOME/blender"
             curl -fsSL "$BLENDER_URL" | tar -xJ --strip-components=1 -C "$HOME/blender"

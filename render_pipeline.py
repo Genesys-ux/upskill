@@ -69,6 +69,7 @@ def run_blender_segment(
     if platform.system() == "Linux":
         env.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
         env.setdefault("MESA_GL_VERSION_OVERRIDE", "4.5")
+        env.setdefault("MESA_GLSL_VERSION_OVERRIDE", "450")
         env.setdefault("GALLIUM_DRIVER", "llvmpipe")
         if shutil.which("xvfb-run") and not env.get("DISPLAY"):
             cmd = ["xvfb-run", "-a", "--server-args=-screen 0 1280x720x24"] + cmd
