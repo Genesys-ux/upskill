@@ -1,4 +1,4 @@
-"""Master 75-second 3D Continuous Camera Choreography, Zero-Flick Character Blocking & Prop Sync (v2 Audited)."""
+"""Master 75-second 3D Continuous Camera Choreography, Natural Biomechanical Walk, Barista Cup Contact & Speaker Emphasis Zooms (v3)."""
 from __future__ import annotations
 
 import math
@@ -10,23 +10,23 @@ FPS = 30.0
 # GLOBAL FLOOR & SURFACE ELEVATION CONSTANTS (ANTI-CLIPPING SINGLE SOURCE OF TRUTH)
 # ============================================================================
 DOCK_Z = 2.40        # World 1: Little Diomede wooden pier deck top
-ICE_LEDGE_Z = 1.65   # World 1: Lower dock ice-ledge step (connected by continuous wooden ramp!)
-CLIFF_DECK_Z = 24.0  # World 2: Rjukan Solspeilet cliff observation platform
-SQUARE_Z = 0.0       # World 2: Rjukan Torg cobblestone plaza
-CAFE_FLOOR_Z = 0.0   # World 3: Baarle street & Café de Grens floor
-BAR_TOP_Z = 0.86     # World 3: Oak bar counter top (proportional to 2.5D bean-head torso!)
-BRAM_STEP_Z = 0.24   # World 3: Raised barista wooden duckboard behind bar so Bram's chest/apron & arms clear BAR_TOP_Z!
+ICE_LEDGE_Z = 1.65   # World 1: Lower dock sea-ice ledge (connected by wide wooden ramp)
+CLIFF_DECK_Z = 24.0  # World 2: Rjukan Solspeilet open-air steel cliff platform
+SQUARE_Z = 0.0       # World 2: Rjukan Torg cobblestone plaza & plowed street
+CAFE_FLOOR_Z = 0.0   # World 3: Baarle clinker street & Café de Grens floor
+BAR_TOP_Z = 0.92     # World 3: Oak bar counter top (hits Bram cleanly at y=316px lower apron!)
+BRAM_STEP_Z = 0.31   # World 3: Raised oak barista duckboard behind bar -> legs 100% hidden (<0.85m), apron/arms/hand 100% clear & touching cup!
 
 # Exact 1-frame camera cuts (where blocking changes are permitted simultaneously on the exact cut frame)
 CAMERA_CUT_FRAMES = {
     750,   # 25.0s: Diomede -> Rjukan whip-pan exit
     1470,  # 49.0s: Rjukan sunglasses match-cut -> Baarle sidewalk (+)
-    2100,  # 70.0s: Café interior -> Golden-hour Baarle street finale (eliminates 01:10 empty-chair flick!)
+    2100,  # 70.0s: Café interior -> Golden-hour Baarle street finale
 }
 
 
 # ============================================================================
-# 1. ORGANIC MOTION CURVES
+# 1. ORGANIC MOTION CURVES & NATURAL STRIDE-SYNCED WALK BIOMECHANICS
 # ============================================================================
 
 def clamp01(t: float) -> float:
@@ -45,6 +45,16 @@ def ease_expo_in_out(t: float) -> float:
 def ease_cubic_in_out(t: float) -> float:
     t = clamp01(t)
     return 4.0 * t * t * t if t < 0.5 else 1.0 - ((-2.0 * t + 2.0) ** 3) * 0.5
+
+
+def ease_cubic_in_out_deriv(t: float) -> float:
+    t = clamp01(t)
+    return 12.0 * t * t if t < 0.5 else 12.0 * ((1.0 - t) ** 2)
+
+
+def ease_out_cubic(t: float) -> float:
+    t = clamp01(t)
+    return 1.0 - ((1.0 - t) ** 3)
 
 
 def ease_out_overshoot(t: float, s: float = 0.75) -> float:
@@ -66,6 +76,66 @@ def lerp3(p0: Tuple[float, float, float], p1: Tuple[float, float, float], t: flo
     return (lerp(p0[0], p1[0], t), lerp(p0[1], p1[1], t), lerp(p0[2], p1[2], t))
 
 
+def lerp_angle_deg(a0: float, a1: float, t: float) -> float:
+    diff = ((a1 - a0 + 180.0) % 360.0) - 180.0
+    return a0 + diff * t
+
+
+def compute_natural_walk_rig(
+    dist_traveled_m: float,
+    speed_mps: float,
+    stride_len_m: float = 0.58,
+    arm_energy: float = 1.0,
+) -> Dict[str, Any]:
+    """
+    True distance-locked biomechanical walk cycle using Free-Rig 2-Bone IK!
+    - Foot phase phi is mathematically locked to world distance traveled -> ZERO foot sliding or dragging!
+    - Includes heel-toe swing arc, pelvis weight bounce, forward momentum lean, squash-stretch, and head follow-through!
+    """
+    amp = clamp01(speed_mps / 0.50)
+    phi = (dist_traveled_m / max(0.25, stride_len_m)) * math.pi
+
+    # Real gait contact/passing dynamics: pelvis drops on foot strike, rises on mid-stance passing!
+    stride_lift_wave = abs(math.sin(phi))
+    pelvis_y = (4.5 - stride_lift_wave * 11.5) * amp
+    head_bob_y = pelvis_y + math.sin(phi * 2.0 - 0.45) * 2.4 * amp
+    torso_lean = (8.5 + math.sin(phi) * 2.5) * amp
+    head_tilt = (-2.0 - math.sin(phi - 0.35) * 3.8) * amp
+    squash_y = 1.0 + (stride_lift_wave - 0.45) * 0.045 * amp
+    squash_x = 1.0 / squash_y
+
+    # Opposite leg swing with generous stride depth (Z) + energetic arc lift (Y), strictly kissed to ground y=464!
+    stride_px = 46.0 * amp
+    lift_px = 42.0 * amp
+    l_swing = max(0.0, math.sin(phi))
+    r_swing = max(0.0, math.sin(phi + math.pi))
+    l_z = -math.cos(phi) * stride_px
+    r_z = -math.cos(phi + math.pi) * stride_px
+    l_y = 464.0 - (l_swing ** 0.85) * lift_px
+    r_y = 464.0 - (r_swing ** 0.85) * lift_px
+
+    # Energetic visible counter-swinging arms (opposite phase to legs!) with clear silhouette in profile!
+    l_arm = math.cos(phi) * amp * arm_energy
+    r_arm = -math.cos(phi) * amp * arm_energy
+    lh = (-52.0, 272.0 + pelvis_y - max(0.0, l_arm) * 44.0, l_arm * 92.0 + 8.0)
+    rh = (56.0, 272.0 + pelvis_y - max(0.0, r_arm) * 44.0, r_arm * 92.0 + 8.0)
+
+    return {
+        "animation": "free",
+        "pelvis_y": pelvis_y,
+        "head_bob_y": head_bob_y,
+        "torso_lean_deg": torso_lean,
+        "head_tilt_deg": head_tilt,
+        "hat_tilt_extra": math.sin(phi - 0.5) * 3.2 * amp,
+        "squash_x": squash_x,
+        "squash_y": squash_y,
+        "left_foot_target": (-18.0, l_y, l_z),
+        "right_foot_target": (22.0, r_y, r_z),
+        "left_hand_target": lh,
+        "right_hand_target": rh,
+    }
+
+
 def eval_camera_track(keyframes: List[Dict[str, Any]], t_sec: float) -> Dict[str, Any]:
     if t_sec <= keyframes[0]["t"]:
         k = keyframes[0]
@@ -79,7 +149,6 @@ def eval_camera_track(keyframes: List[Dict[str, Any]], t_sec: float) -> Dict[str
         k1 = keyframes[i + 1]
         if k0["t"] <= t_sec <= k1["t"]:
             if k1.get("cut"):
-                # Instant 1-frame hard cut at k1["t"] (no interpolation across cut!)
                 if t_sec < k1["t"] - 1e-4:
                     return {"pos": k0["pos"], "target": k0["target"], "lens": k0["lens"], "roll": k0.get("roll", 0.0)}
                 return {"pos": k1["pos"], "target": k1["target"], "lens": k1["lens"], "roll": k1.get("roll", 0.0)}
@@ -111,8 +180,8 @@ def eval_camera_track(keyframes: List[Dict[str, Any]], t_sec: float) -> Dict[str
             target = lerp3(k0["target"], k1["target"], e)
             lens = lerp(k0["lens"], k1["lens"], clamp01(e))
             roll = lerp(k0.get("roll", 0.0), k1.get("roll", 0.0), e)
-            breath_x = math.sin(t_sec * 1.9) * 0.012
-            breath_z = math.cos(t_sec * 2.4) * 0.010
+            breath_x = math.sin(t_sec * 1.9) * 0.010
+            breath_z = math.cos(t_sec * 2.4) * 0.008
             return {
                 "pos": (pos[0] + breath_x, pos[1], pos[2] + breath_z),
                 "target": target,
@@ -124,96 +193,85 @@ def eval_camera_track(keyframes: List[Dict[str, Any]], t_sec: float) -> Dict[str
 
 
 # ============================================================================
-# 2. RAYCAST-CLEARED 30+ CONTINUOUS CAMERA MOVEMENTS (ZERO OBSTRUCTIONS!)
+# 2. 34+ DYNAMIC CONTINUOUS CAMERA MOVES WITH SPEAKER EMPHASIS ZOOM TRANSITIONS!
 # ============================================================================
 
-# WORLD 1: Little Diomede Cliff Dock & Bering Strait (00:00.0 – 00:25.0)
-# GEOMETRY GUARANTEE: Dock sits in X[-10, 10], Y[-4.0, +2.6], Z=2.40.
-# Little Diomede rocky slope & Ignaluk stilt houses are strictly in X <= -7.5 (LEFT) and Y <= -7.0 (FAR BEHIND)!
-# So EVERY camera point in Y[-5.8 .. +22], Z >= 3.2 is 100% OPEN AIR with crystal-clear sightline to Arka, Soren, dock, Ignaluk village & Big Diomede!
+# WORLD 1: Little Diomede Pier, Ignaluk Village & Bering Strait (00:00.0 – 00:25.0)
 CAMERA_DIOMEDE: List[Dict[str, Any]] = [
-    # Move 1-2 (00:00-00:04): FRAME 1 IMMEDIATELY LOCKS ON ARKA & SPINNING SNOWBALL + Big Diomede behind!
-    {"t": 0.0,   "pos": (-2.4, -3.2, 4.15),  "target": (-1.30, 1.50, 3.65), "lens": 20.0, "roll": -4.0},
-    {"t": 1.6,   "pos": (-1.45, -0.75, 3.68), "target": (-1.30, 1.50, 3.72), "lens": 24.0, "roll": 0.0, "ease": "snappy"},
-    {"t": 4.0,   "pos": (-1.10, -1.25, 3.65), "target": (-1.15, 2.00, 3.65), "lens": 22.0, "roll": 1.5, "ease": "cubic"},
-    # Move 3 (00:04-00:07.5): Smooth continuous orbit following Arka walking to Kapten Soren on dock
-    {"t": 7.4,   "pos": (0.85, -2.15, 3.85), "target": (0.95, 1.50, 3.55),  "lens": 22.0, "roll": 0.0, "ease": "cubic",
-     "orbit": {"center": (0.65, 1.50, 3.6), "r0": 3.4, "r1": 3.55, "ang0": -118.0, "ang1": -64.0, "z0": 3.68, "z1": 3.85}},
-    # Move 4 (00:07.5-00:09.4): Dutch angle push-in on Soren's SENIN calendar, brass binoculars & USA/RUSSIA sign
-    {"t": 9.4,   "pos": (1.15, -0.85, 3.68), "target": (2.05, 1.55, 3.55),  "lens": 28.0, "roll": 9.0, "ease": "overshoot"},
-    # Move 5-6 (00:09.4-00:12.6): Speed-ramped aerial sweep over sea-ice floes slicing thin holographic GARIS TANGGAL INTERNASIONAL!
-    {"t": 10.9,  "pos": (0.20, 6.50, 4.30),  "target": (0.0, 24.0, 4.40),   "lens": 19.0, "roll": -5.0, "ease": "expo"},
-    {"t": 12.6,  "pos": (0.00, 17.5, 4.70),  "target": (0.0, 26.5, 4.65),   "lens": 21.0, "roll": 0.0,  "ease": "overshoot"},
-    # Move 7-8 (00:12.6-00:16.4): Fast whip-back directly framing Soren & Arka on dock (NEVER empty sky!)
-    {"t": 14.0,  "pos": (0.60, -1.65, 3.90), "target": (1.45, 1.55, 3.62),  "lens": 25.0, "roll": 2.0,  "ease": "snappy"},
-    {"t": 16.4,  "pos": (1.35, -0.55, 3.75), "target": (1.85, 1.55, 3.70),  "lens": 34.0, "roll": 0.0,  "ease": "cubic"},
-    # Move 9 (00:16.4-00:20.4): Continuous pull-left & crane-over-dock-edge tracking Arka walking onto lower ice ledge (ALWAYS ABOVE Z >= 3.45, ZERO DOCK CLIPPING!)
-    {"t": 18.4,  "pos": (-1.20, -1.45, 3.95), "target": (-2.40, 2.25, 2.75), "lens": 22.0, "roll": -3.0, "ease": "cubic"},
-    {"t": 20.3,  "pos": (-0.85, 1.65, 3.85),  "target": (-2.85, 3.15, 2.35), "lens": 24.0, "roll": -5.0, "ease": "snappy"},
-    # Move 10-11 (00:20.3-00:24.3): Snappy push-in as Soren yanks Arka back safely, then raises binoculars to lens!
-    {"t": 22.2,  "pos": (-1.20, -0.45, 3.65), "target": (-2.15, 2.35, 3.15), "lens": 24.0, "roll": 3.0,  "ease": "overshoot"},
-    {"t": 24.2,  "pos": (-1.65, 0.35, 3.55),  "target": (-1.75, 2.05, 3.55), "lens": 40.0, "roll": 0.0,  "ease": "snappy"},
-    # Move 12 (00:24.2-00:25.0): Crisp 8-frame high-speed whip-pan right + skyward (NO slow gray fade!)
-    {"t": 24.72, "pos": (-1.65, 0.35, 3.55),  "target": (-1.75, 2.05, 3.55), "lens": 42.0, "roll": 0.0,  "ease": "linear"},
-    {"t": 25.0,  "pos": (-1.65, 0.35, 3.65),  "target": (12.0, 2.05, 8.50),  "lens": 18.0, "roll": 22.0, "ease": "expo"},
+    # L01 Arka Hook (00:00-00:04.2): Immediate Wide Hook -> Punchy Zoom-In Push onto Arka & snowball!
+    {"t": 0.0,   "pos": (-2.40, -3.15, 4.15), "target": (-1.30, 1.50, 3.62), "lens": 19.0, "roll": -4.0},
+    {"t": 1.35,  "pos": (-1.40, -0.75, 3.68), "target": (-1.22, 1.50, 3.72), "lens": 29.0, "roll": 0.5,  "ease": "snappy"},
+    {"t": 3.20,  "pos": (-1.35, -0.55, 3.68), "target": (-1.20, 1.50, 3.74), "lens": 33.0, "roll": 1.5,  "ease": "cubic"},
+    # L02 Arka Diomede (00:04.2-00:09.4): Smooth Zoom-Out tracking Arka's natural profile walk toward Kapten Soren!
+    {"t": 4.40,  "pos": (-1.05, -2.10, 3.85), "target": (-0.65, 1.50, 3.60), "lens": 21.0, "roll": 0.0,  "ease": "snappy"},
+    {"t": 7.20,  "pos": (0.80, -2.10, 3.85),  "target": (1.05, 1.52, 3.55),  "lens": 22.0, "roll": 0.0,  "ease": "cubic",
+     "orbit": {"center": (0.60, 1.50, 3.6), "r0": 3.6, "r1": 3.55, "ang0": -118.0, "ang1": -66.0, "z0": 3.80, "z1": 3.85}},
+    # Dutch push-in on Soren's SENIN calendar & USA/RUSSIA sign
+    {"t": 9.30,  "pos": (1.10, -0.80, 3.68),  "target": (2.00, 1.55, 3.55),  "lens": 31.0, "roll": 8.0,  "ease": "overshoot"},
+    # Aerial Zoom-Out & Speed-Ramp Sweep over jagged Bering sea-ice slicing sheer holographic Date Line toward Big Diomede!
+    {"t": 10.8,  "pos": (0.15, 6.20, 4.35),   "target": (0.0, 26.0, 4.20),   "lens": 19.0, "roll": -4.0, "ease": "expo"},
+    {"t": 12.2,  "pos": (0.00, 16.5, 4.65),   "target": (0.0, 30.0, 4.40),   "lens": 26.0, "roll": 0.0,  "ease": "overshoot"},
+    # L03 Kapten Soren Speaks (00:12.3-00:16.6): Whip-back -> Crisp Emphasis Zoom-In tight on Soren!
+    {"t": 13.4,  "pos": (0.80, -1.45, 3.82),  "target": (1.75, 1.55, 3.62),  "lens": 24.0, "roll": 1.5,  "ease": "snappy"},
+    {"t": 15.8,  "pos": (1.42, -0.35, 3.72),  "target": (1.85, 1.55, 3.68),  "lens": 38.0, "roll": 0.0,  "ease": "overshoot"},
+    {"t": 16.6,  "pos": (1.42, -0.35, 3.72),  "target": (1.85, 1.55, 3.68),  "lens": 40.0, "roll": 0.0,  "ease": "cubic"},
+    # L04 Arka Ice Bridge (00:16.7-00:24.2): Zoom-Out wide tracking walk -> Crash-Zoom on cracking ice -> Macro Zoom into Soren's binoculars!
+    {"t": 18.4,  "pos": (-1.35, -1.85, 4.05), "target": (-2.10, 2.25, 2.85), "lens": 20.0, "roll": -3.0, "ease": "snappy"},
+    {"t": 20.1,  "pos": (-0.95, 1.55, 3.88),  "target": (-2.85, 3.10, 2.40), "lens": 31.0, "roll": -5.5, "ease": "overshoot"},
+    {"t": 21.9,  "pos": (-1.05, -0.55, 3.68), "target": (-2.05, 2.15, 3.25), "lens": 23.0, "roll": 2.5,  "ease": "snappy"},
+    {"t": 24.2,  "pos": (-1.45, 0.35, 3.62),  "target": (-1.45, 2.05, 3.61), "lens": 46.0, "roll": 0.0,  "ease": "overshoot"},
+    # Fast 8-frame high-speed whip-pan right + skyward
+    {"t": 24.72, "pos": (-1.45, 0.35, 3.62),  "target": (-1.45, 2.05, 3.61), "lens": 48.0, "roll": 0.0,  "ease": "linear"},
+    {"t": 25.0,  "pos": (-1.45, 0.35, 3.70),  "target": (12.0, 2.05, 8.50),  "lens": 18.0, "roll": 22.0, "ease": "expo"},
 ]
 
-# WORLD 2: Rjukan Dark Valley & Solspeilet Heliostat Mirrors (00:25.0 – 00:49.0)
-# GEOMETRY GUARANTEE: Mountain cliff face starts strictly at Y >= +29.0m!
-# Astrid's cliff deck is jutting out in open air at Y[+20.5 .. +25.5], Z=24.0; 3 Giant Solspeilet mirrors sit cleanly at Y=+26.2, Z=27.2!
-# Camera on cliff stays strictly at Y <= +18.0m -> 100% UNOBSTRUCTED HERO VIEW OF ASTRID, TABLET & ALL 3 MIRRORS!
+# WORLD 2: Rjukan Dark Valley, Norwegian Town & Solspeilet Cliff (00:25.0 – 00:49.0)
 CAMERA_RJUKAN: List[Dict[str, Any]] = [
-    # Move 13 (00:25.0-00:27.5): High-speed whip-entry crane dive from sky above dark valley down into Rjukan Torg!
-    {"t": 25.0,  "pos": (-8.0, -10.5, 19.0), "target": (-1.0, 0.5, 2.5),    "lens": 18.0, "roll": -14.0},
-    {"t": 27.5,  "pos": (-4.4, -6.8, 3.1),   "target": (-1.55, -1.65, 1.35), "lens": 21.0, "roll": 0.0, "ease": "snappy"},
-    # Move 14 (00:27.5-00:31.2): Smooth lateral parallax sweep framing shivering Arka beside snow-capped iron streetlamp
-    {"t": 31.2,  "pos": (-0.65, -4.8, 1.65), "target": (-1.55, -1.65, 1.32), "lens": 24.0, "roll": 1.5, "ease": "cubic"},
-    # Move 15-16 (00:31.2-00:34.8): High-speed vertical rocket crane straight up open valley air to Astrid's cliff deck!
-    {"t": 32.8,  "pos": (-2.4, 15.2, 26.2),  "target": (-1.60, 21.6, 25.4),  "lens": 22.0, "roll": -4.0, "ease": "expo"},
-    {"t": 34.8,  "pos": (-1.45, 18.4, 25.45), "target": (-1.60, 21.6, 25.35), "lens": 34.0, "roll": 0.0, "ease": "overshoot"},
-    # Move 17 (00:34.8-00:36.6): Wide hero low-angle shot pulling back slightly to show Astrid + ALL 3 GIANT SOLSPEILET MIRRORS pivoting!
-    {"t": 36.6,  "pos": (1.2, 13.8, 25.0),   "target": (0.0, 26.0, 27.6),   "lens": 18.0, "roll": 3.0,  "ease": "snappy"},
-    # Move 18-19 (00:36.6-00:40.4): Tracking ride diving alongside the golden god-ray down into Rjukan Torg!
-    {"t": 38.6,  "pos": (3.2, 11.2, 14.5),   "target": (0.4, 0.8, 1.4),     "lens": 20.0, "roll": -6.0, "ease": "expo"},
-    {"t": 40.4,  "pos": (-3.6, -5.2, 2.95),  "target": (0.4, 0.8, 1.2),     "lens": 21.0, "roll": 0.0,  "ease": "overshoot"},
-    # Move 20 (00:40.4-00:43.4): Snappy dolly-in into the sunlit golden square revealing Kakek Henrik lounging in his beach chair!
-    {"t": 43.4,  "pos": (-0.65, -2.35, 1.45), "target": (0.95, 0.85, 1.05), "lens": 25.0, "roll": 2.0,  "ease": "snappy"},
-    # Move 21 (00:43.4-00:47.2): Smooth orbiting two-shot from amazed Arka to chuckling Henrik giving thumbs-up
-    {"t": 47.2,  "pos": (1.65, -1.75, 1.42), "target": (0.45, 0.78, 1.12),  "lens": 27.0, "roll": 0.0,  "ease": "cubic",
-     "orbit": {"center": (0.50, 0.80, 1.2), "r0": 3.25, "r1": 2.55, "ang0": -108.0, "ang1": -62.0, "z0": 1.45, "z1": 1.38}},
-    # Move 22-23 (00:47.2-00:49.0): Fast macro zoom straight into Henrik's retro sunglasses reflection -> instant match-cut at 49.0s!
-    {"t": 48.65, "pos": (0.95, -0.30, 1.25), "target": (0.95, 0.80, 1.24),  "lens": 54.0, "roll": 0.0,  "ease": "expo"},
-    {"t": 49.0,  "pos": (0.95, 0.25, 1.25),  "target": (0.95, 0.80, 1.24),  "lens": 72.0, "roll": 0.0,  "ease": "linear"},
+    # L05 Arka Intro (00:25.0-00:32.3): Dramatic aerial dive -> Emphasis Zoom-In onto shivering Arka!
+    {"t": 25.0,  "pos": (-7.5, -10.5, 18.5),  "target": (-1.0, 0.5, 2.5),    "lens": 18.0, "roll": -12.0},
+    {"t": 27.4,  "pos": (-4.4, -6.6, 3.15),   "target": (-1.55, -1.65, 1.35), "lens": 20.0, "roll": 0.0,  "ease": "snappy"},
+    {"t": 29.6,  "pos": (-1.05, -5.0, 1.85),  "target": (-1.55, -1.65, 1.32), "lens": 24.0, "roll": 1.0,  "ease": "cubic"},
+    {"t": 31.6,  "pos": (-0.95, -4.1, 1.62),  "target": (-1.55, -1.65, 1.34), "lens": 33.0, "roll": 1.5,  "ease": "overshoot"},
+    # L06 Astrid Speaks (00:32.5-00:36.2): Rocket crane up -> Snappy Zoom-In onto Astrid & tablet -> Wide Zoom-Out revealing ALL 3 Solspeilet mirrors!
+    {"t": 32.9,  "pos": (-2.20, 15.0, 26.25), "target": (-1.60, 22.0, 25.45), "lens": 21.0, "roll": -3.5, "ease": "expo"},
+    {"t": 34.4,  "pos": (-1.45, 18.2, 25.92), "target": (-1.55, 22.0, 25.38), "lens": 36.0, "roll": 0.0,  "ease": "overshoot"},
+    {"t": 36.3,  "pos": (1.10, 13.4, 25.35),  "target": (0.0, 26.0, 27.3),    "lens": 18.0, "roll": 2.5,  "ease": "snappy"},
+    # L07 Arka Sunbeam (00:36.4-00:45.3): Ride golden beam down -> Wide plaza reveal -> Dolly Zoom-In onto sunlit square & Henrik!
+    {"t": 38.5,  "pos": (3.20, 10.8, 14.2),   "target": (0.4, 0.8, 1.4),      "lens": 19.0, "roll": -5.5, "ease": "expo"},
+    {"t": 40.4,  "pos": (-3.60, -5.2, 2.95),  "target": (0.4, 0.8, 1.25),     "lens": 20.0, "roll": 0.0,  "ease": "overshoot"},
+    {"t": 43.2,  "pos": (-0.65, -2.55, 1.48), "target": (0.85, 0.85, 1.08),   "lens": 27.0, "roll": 1.5,  "ease": "snappy"},
+    # L08 Kakek Henrik Speaks (00:45.5-00:48.4): Orbiting two-shot -> Punchy Emphasis Zoom-In straight onto Henrik's sunglasses!
+    {"t": 45.4,  "pos": (1.45, -2.05, 1.44),  "target": (0.60, 0.80, 1.12),   "lens": 26.0, "roll": 0.0,  "ease": "cubic",
+     "orbit": {"center": (0.50, 0.80, 1.2), "r0": 3.40, "r1": 2.95, "ang0": -108.0, "ang1": -72.0, "z0": 1.48, "z1": 1.42}},
+    {"t": 47.4,  "pos": (1.20, -1.25, 1.32),  "target": (0.95, 0.80, 1.22),   "lens": 42.0, "roll": 0.0,  "ease": "overshoot"},
+    {"t": 48.65, "pos": (0.95, -0.25, 1.24),  "target": (0.95, 0.80, 1.24),   "lens": 58.0, "roll": 0.0,  "ease": "expo"},
+    {"t": 49.0,  "pos": (0.95, 0.25, 1.24),   "target": (0.95, 0.80, 1.24),   "lens": 74.0, "roll": 0.0,  "ease": "linear"},
 ]
 
-# WORLD 3: Baarle-Nassau / Baarle-Hertog Cross-Border Café & Street (00:49.0 – 00:75.0)
-# GEOMETRY GUARANTEE:
-# - Sidewalk border X=0.0 is 100% CLEAR of all pedestrians & bikes (peds stay strictly at Y < -7.5 or |X| > 3.2)!
-# - Café open doorway X[-2.0..+2.0] at Y=0.0 is 100% CLEAR!
-# - Clara sits at (-0.85, 3.65) with chair BEHIND her at (-0.85, 3.92), bistro table clearly to her left at (-1.85, 3.60)!
-# - Bram stands on raised barista step (Z=0.24) behind 0.86m bar at (+0.75, 5.85), pastry case far left at (-2.25, 5.25)!
-# - Opposite dual-flag stepped-gable house sits cleanly at Y=-11.2 facing +Y with warm sunlight lighting its plaques!
+# WORLD 3: Baarle-Nassau / Baarle-Hertog Corner Café & Dual-Flag Brick Street (00:49.0 – 00:75.0)
 CAMERA_BAARLE: List[Dict[str, Any]] = [
-    # Move 24 (00:49.0-00:52.6): Match-cut! Low-angle speed-tracking hugging Baarle sidewalk white (+) & B|NL tiles right through open doorway!
-    {"t": 49.0,  "pos": (0.0, -6.2, 0.45),   "target": (0.0, 0.5, 0.42),    "lens": 19.0, "roll": 0.0},
-    {"t": 52.6,  "pos": (0.10, -0.5, 0.65),  "target": (0.0, 4.8, 1.15),    "lens": 20.0, "roll": 1.5,  "ease": "cubic"},
-    # Move 25 (00:52.6-00:55.4): Smooth boom-up & glide inside café framing Arka hopping border + Bram behind bar counter + Italian espresso & pastry case
-    {"t": 55.4,  "pos": (0.25, 1.85, 1.56),  "target": (0.15, 5.25, 1.36),  "lens": 19.0, "roll": 0.0,  "ease": "snappy"},
-    # Move 26 (00:55.4-00:59.0): Crisp lateral bar tracking following latte cup sliding across brass NL -> B line (shows espresso machine, Bram & pastry vitrine!)
-    {"t": 59.0,  "pos": (-0.35, 1.95, 1.48), "target": (-0.10, 5.15, 1.24), "lens": 21.0, "roll": -1.5, "ease": "overshoot"},
-    # Move 27 (00:59.0-01:02.0): Comedic snap-zoom on Clara's baffled expression, then whip-tilt down to her feet on NL while chair in B
-    {"t": 60.5,  "pos": (0.35, 1.80, 1.42),  "target": (-0.85, 3.65, 1.32), "lens": 32.0, "roll": 3.5,  "ease": "snappy"},
-    {"t": 62.0,  "pos": (0.45, 1.95, 1.05),  "target": (-0.55, 3.65, 0.28), "lens": 24.0, "roll": -4.0, "ease": "overshoot"},
-    # Move 28 (01:02.0-01:06.2): Fast whip-pan & zoom through open café entrance straight onto opposite dual-flag brick house (24mm fits BOTH plaques & windows!)
-    {"t": 63.1,  "pos": (0.0, 0.80, 1.75),   "target": (0.0, -11.2, 2.25),  "lens": 28.0, "roll": 0.0,  "ease": "expo"},
-    {"t": 66.2,  "pos": (0.0, -4.60, 1.95),  "target": (0.0, -11.2, 2.15),  "lens": 24.0, "roll": 0.0,  "ease": "cubic"},
-    # Move 29 (01:06.2-01:09.95): Whip-pan back inside catching Clara lifting BOTH feet onto chair rung while Arka & Bram laugh!
-    {"t": 67.3,  "pos": (0.35, 0.75, 1.52),  "target": (0.00, 4.10, 1.22),  "lens": 19.0, "roll": -2.0, "ease": "snappy"},
-    {"t": 69.95, "pos": (0.45, 0.95, 1.50),  "target": (0.00, 4.10, 1.22),  "lens": 20.0, "roll": 0.0,  "ease": "cubic"},
-    # Move 30 (01:10.00-01:15.0): EXACT 1-FRAME CLEAN CUT OUTSIDE onto warm golden street (ZERO 0.5s empty-chair flick!)
-    {"t": 70.00, "pos": (0.0, -5.60, 1.48),  "target": (0.0, -2.35, 1.20),  "lens": 22.0, "roll": 0.0,  "cut": True},
-    {"t": 74.2,  "pos": (0.0, -7.20, 1.75),  "target": (0.0, -2.35, 1.26),  "lens": 20.0, "roll": 0.0,  "ease": "cubic"},
-    {"t": 75.0,  "pos": (0.0, -4.90, 1.54),  "target": (0.0, -2.35, 1.38),  "lens": 24.0, "roll": -2.5, "ease": "snappy"},
+    # L09 Arka Baarle Intro (00:49.0-00:56.5): Low tracking sweep through doorway -> Zoom-In Pop as Arka hops border!
+    {"t": 49.0,  "pos": (0.0, -6.20, 0.48),   "target": (0.0, 0.5, 0.45),     "lens": 19.0, "roll": 0.0},
+    {"t": 52.4,  "pos": (0.10, -0.50, 0.72),  "target": (0.0, 4.8, 1.18),     "lens": 20.0, "roll": 1.5,  "ease": "cubic"},
+    {"t": 54.6,  "pos": (0.30, 1.75, 1.54),   "target": (0.25, 5.10, 1.38),   "lens": 26.0, "roll": 0.0,  "ease": "snappy"},
+    # L10 Bram Speaks & Shoves Cup (00:56.6-00:59.4): Emphasis Zoom-In + crisp lateral track watching Bram's hand push the cup across brass line!
+    {"t": 56.5,  "pos": (0.35, 2.05, 1.48),   "target": (0.32, 5.20, 1.26),   "lens": 24.0, "roll": 0.0,  "ease": "cubic"},
+    {"t": 58.6,  "pos": (-0.28, 2.25, 1.44),  "target": (-0.08, 5.15, 1.24),  "lens": 33.0, "roll": -1.5, "ease": "overshoot"},
+    # L11 Arka Explains Border Law (00:59.5-01:06.7): Comedic Snap-Zoom on Clara -> Whip-pan outside cleanly past awning -> Emphasis Zoom onto Dual-Flag House!
+    {"t": 60.4,  "pos": (0.32, 1.75, 1.40),   "target": (-0.85, 3.74, 1.26),  "lens": 36.0, "roll": 3.0,  "ease": "snappy"},
+    {"t": 61.9,  "pos": (0.42, 1.90, 1.05),   "target": (-0.55, 3.74, 0.30),  "lens": 24.0, "roll": -3.5, "ease": "overshoot"},
+    # Start exterior push cleanly at Y=-2.45 (CLEAR of café awning!) -> Emphasis Zoom onto brick house & plaques!
+    {"t": 63.1,  "pos": (0.0, -2.45, 2.05),   "target": (0.0, -11.2, 2.35),   "lens": 22.0, "roll": 0.0,  "ease": "expo"},
+    {"t": 66.2,  "pos": (0.0, -4.95, 2.02),   "target": (0.0, -11.2, 2.18),   "lens": 29.0, "roll": 0.0,  "ease": "overshoot"},
+    # L12 Clara Comedy Line (01:06.8-01:09.95): Whip-pan back inside -> Comedic Emphasis Zoom-In on Clara lifting BOTH feet while Arka & Bram laugh!
+    {"t": 67.3,  "pos": (0.35, 0.80, 1.52),   "target": (-0.05, 4.10, 1.20),  "lens": 19.0, "roll": -2.0, "ease": "snappy"},
+    {"t": 69.5,  "pos": (0.28, 1.35, 1.44),   "target": (-0.42, 3.90, 1.16),  "lens": 31.0, "roll": 2.0,  "ease": "overshoot"},
+    {"t": 69.95, "pos": (0.28, 1.35, 1.44),   "target": (-0.42, 3.90, 1.16),  "lens": 32.0, "roll": 2.0,  "ease": "cubic"},
+    # L13 Arka Finale (01:10.00-01:15.0): Exact 1-frame Cut Outside -> Wide Pull-Back -> Punchy Closing Emphasis Zoom-In on Arka!
+    {"t": 70.00, "pos": (0.0, -5.50, 1.48),   "target": (0.0, -2.35, 1.20),   "lens": 21.0, "roll": 0.0,  "cut": True},
+    {"t": 72.8,  "pos": (0.0, -7.10, 1.72),   "target": (0.0, -2.35, 1.26),   "lens": 19.0, "roll": 0.0,  "ease": "cubic"},
+    {"t": 74.6,  "pos": (0.0, -4.50, 1.52),   "target": (0.0, -2.35, 1.38),   "lens": 30.0, "roll": -2.5, "ease": "overshoot"},
+    {"t": 75.0,  "pos": (0.0, -4.40, 1.52),   "target": (0.0, -2.35, 1.38),   "lens": 31.0, "roll": -2.5, "ease": "linear"},
 ]
 
 
@@ -248,7 +306,7 @@ def _lipsync_val(lipsync_curves: Optional[Dict[str, List[float]]], speaker: str,
 
 
 # ============================================================================
-# 3. ZERO-FLICK, ANTI-CLIPPING CHARACTER BLOCKING & BIOMECHANICS
+# 3. ZERO-FLICK, ANTI-CLIPPING, NATURAL BIOMECHANICAL CHARACTER BLOCKING (v3)
 # ============================================================================
 
 def get_characters_at_frame(
@@ -274,15 +332,13 @@ def get_characters_at_frame(
         }
 
     # ------------------------------------------------------------------
-    # SCENE 1: DIOMEDE (Arka + Kapten Soren — 100% CONTINUOUS WALKING, ZERO TELEPORTS!)
+    # SCENE 1: DIOMEDE (Arka + Kapten Soren — NATURAL STRIDE WALK, ZERO OVERLAP!)
     # ------------------------------------------------------------------
     if scene_name == "diomede":
         arka_m = _lipsync_val(lipsync_curves, "arka", frame)
         soren_m = _lipsync_val(lipsync_curves, "kapten_soren", frame)
 
-        # ARKA CONTINUOUS PATH (Zero teleport jumps across all 0..25s!)
         if t < 4.0:
-            # Hook (00:00-00:04): Standing firmly on wooden dock spinning snowball!
             pos_a = (-1.30, 1.50, DOCK_Z)
             fac_a = -90.0
             bob = math.sin(t * 4.5) * 3.0
@@ -294,18 +350,28 @@ def get_characters_at_frame(
                 "eyes": "honey_oval", "eyebrows": "thick_arch", "mouth": "confident_gap",
                 "mouth_open": arka_m, "eye_gaze_x": 0.10, "eye_gaze_y": -0.05,
             }
-        elif t < 7.4:
-            # Walks smoothly along wooden dock toward Kapten Soren!
-            u = ease_cubic_in_out((t - 4.0) / 3.4)
+        elif t < 7.2:
+            # NATURAL STRIDE-SYNCED PROFILE WALK along wooden dock toward Kapten Soren!
+            dt_w = 3.2
+            u_raw = (t - 4.0) / dt_w
+            u = ease_cubic_in_out(u_raw)
+            du_dt = ease_cubic_in_out_deriv(u_raw) / dt_w
+            dx, dy = 1.85, 0.02
+            total_d = math.hypot(dx, dy)
             pos_a = (lerp(-1.30, 0.55, u), lerp(1.50, 1.52, u), DOCK_Z)
-            fac_a = lerp(-30.0, -60.0, u)
-            rk_a = {
-                "animation": "walk", "arm_pose": "point" if u > 0.65 else "ready",
+            # Turn smoothly to face walking direction (+X = 0 deg) during stride, then face camera/Soren (-60 deg)!
+            if u_raw < 0.18:
+                fac_a = lerp_angle_deg(-90.0, 2.0, u_raw / 0.18)
+            elif u_raw > 0.80:
+                fac_a = lerp_angle_deg(2.0, -60.0, (u_raw - 0.80) / 0.20)
+            else:
+                fac_a = 2.0
+            rk_a = compute_natural_walk_rig(total_d * u, total_d * du_dt, stride_len_m=0.56)
+            rk_a.update({
                 "eyes": "honey_oval", "eyebrows": "thick_arch", "mouth": "confident_gap",
-                "mouth_open": arka_m, "eye_gaze_x": 0.22,
-            }
+                "mouth_open": arka_m, "eye_gaze_x": 0.20,
+            })
         elif t < 16.4:
-            # Stands beside Soren on dock pointing toward Big Diomede
             pos_a = (0.55, 1.52, DOCK_Z)
             fac_a = -60.0 if t < 12.0 else -30.0
             gest = math.sin(t * 5.0) * 8.0
@@ -318,17 +384,26 @@ def get_characters_at_frame(
                 "mouth": "confident_gap" if t < 12.0 else "small_o", "mouth_open": arka_m, "eye_gaze_x": 0.35,
             }
         elif t < 19.6:
-            # CONTINUOUS WALK LEFT along the wooden dock & down the smooth snowy wooden ramp onto the front-left sea-ice ledge! (ZERO TELEPORT!)
-            u = ease_cubic_in_out((t - 16.4) / 3.2)
-            pos_a = (lerp(0.55, -2.85, u), lerp(1.52, 3.10, u), lerp(DOCK_Z, ICE_LEDGE_Z, clamp01((u - 0.55) / 0.45)))
-            fac_a = lerp(-150.0, 110.0, u)
-            rk_a = {
-                "animation": "walk" if u < 0.88 else "free",
-                "pelvis_y": 5.0, "torso_lean_deg": 7.0, "head_tilt_deg": 7.0,
-                "eyes": "focused", "eyebrows": "raised", "mouth": "smirk", "mouth_open": arka_m, "eye_gaze_y": 0.40,
-            }
+            # NATURAL STRIDE-SYNCED WALK left & down wide wooden ramp onto cracking sea-ice ledge!
+            dt_w = 3.2
+            u_raw = (t - 16.4) / dt_w
+            u = ease_cubic_in_out(u_raw)
+            du_dt = ease_cubic_in_out_deriv(u_raw) / dt_w
+            dx, dy = -3.40, 1.58
+            total_d = math.hypot(dx, dy)
+            walk_az = math.degrees(math.atan2(dy, dx))  # ~155 deg (clear 3/4 profile stride!)
+            pos_a = (lerp(0.55, -2.85, u), lerp(1.52, 3.10, u), lerp(DOCK_Z, ICE_LEDGE_Z, clamp01((u - 0.52) / 0.48)))
+            if u_raw < 0.14:
+                fac_a = lerp_angle_deg(-30.0, walk_az, u_raw / 0.14)
+            elif u_raw > 0.85:
+                fac_a = lerp_angle_deg(walk_az, -110.0, (u_raw - 0.85) / 0.15)
+            else:
+                fac_a = walk_az
+            rk_a = compute_natural_walk_rig(total_d * u, total_d * du_dt, stride_len_m=0.60)
+            rk_a.update({
+                "eyes": "focused", "eyebrows": "raised", "mouth": "smirk", "mouth_open": arka_m, "eye_gaze_y": 0.32,
+            })
         elif t < 20.8:
-            # ICE CRACKS under Arka's feet on the ice ledge!
             pos_a = (-2.85, 3.10, ICE_LEDGE_Z)
             fac_a = -110.0
             flail = math.sin(t * 28.0) * 14.0
@@ -339,7 +414,6 @@ def get_characters_at_frame(
                 "eyes": "panic", "eyebrows": "worried", "mouth": "open_yell", "mouth_open": max(0.75, arka_m), "sweat_drop": True,
             }
         else:
-            # Smoothly yanked backward up onto the safe wooden dock deck by Soren!
             u = ease_out_overshoot(clamp01((t - 20.8) / 0.85), s=0.8)
             pos_a = (lerp(-2.85, -2.55, u), lerp(3.10, 1.95, u), lerp(ICE_LEDGE_Z, DOCK_Z, clamp01(u)))
             fac_a = -95.0
@@ -352,8 +426,8 @@ def get_characters_at_frame(
             }
         pack("arka", pos_a, fac_a, rk_a)
 
-        # KAPTEN SOREN CONTINUOUS PATH (Zero vanishing, stays cleanly on Z=DOCK_Z away from all poles!)
-        if t < 16.4:
+        # KAPTEN SOREN (Starts walking slightly after Arka & stays to Arka's right -> ZERO overlap + crisp binocular grip!)
+        if t < 17.0:
             pos_s = (1.85, 1.55, DOCK_Z)
             fac_s = -112.0
             raise_cal = ease_cubic_in_out(clamp01((t - 7.0) / 1.0))
@@ -364,30 +438,38 @@ def get_characters_at_frame(
                 "right_hand_target": (88.0, lerp(262.0, 186.0, raise_cal), 38.0),
                 "eyes": "chill", "eyebrows": "skeptical", "mouth": "smirk", "mouth_open": soren_m, "eye_gaze_x": -0.25,
             }
-        elif t < 19.8:
-            # Soren walks steadily across the wooden dock behind Arka (ZERO TELEPORT, ZERO PILLAR CLIP!)
-            u = ease_cubic_in_out((t - 16.4) / 3.4)
-            pos_s = (lerp(1.85, -1.75, u), lerp(1.55, 2.05, u), DOCK_Z)
-            fac_s = lerp(-155.0, -110.0, u)
-            rk_s = {
-                "animation": "walk" if u < 0.92 else "free",
-                "eyes": "suspicious", "eyebrows": "skeptical", "mouth": "flat", "mouth_open": soren_m,
-            }
+        elif t < 20.0:
+            dt_s = 3.0
+            u_raw = (t - 17.0) / dt_s
+            u = ease_cubic_in_out(u_raw)
+            du_dt = ease_cubic_in_out_deriv(u_raw) / dt_s
+            dx, dy = -3.30, 0.50
+            total_d = math.hypot(dx, dy)
+            walk_az = math.degrees(math.atan2(dy, dx))
+            pos_s = (lerp(1.85, -1.45, u), lerp(1.55, 2.05, u), DOCK_Z)
+            if u_raw < 0.14:
+                fac_s = lerp_angle_deg(-112.0, walk_az, u_raw / 0.14)
+            elif u_raw > 0.84:
+                fac_s = lerp_angle_deg(walk_az, -108.0, (u_raw - 0.84) / 0.16)
+            else:
+                fac_s = walk_az
+            rk_s = compute_natural_walk_rig(total_d * u, total_d * du_dt, stride_len_m=0.62, arm_energy=0.85)
+            rk_s.update({"eyes": "suspicious", "eyebrows": "skeptical", "mouth": "flat", "mouth_open": soren_m})
         else:
-            # Soren stands firmly on dock edge at (-1.75, 2.05, DOCK_Z), yanks Arka back, shakes head, then lifts brass binoculars!
-            pos_s = (-1.75, 2.05, DOCK_Z)
-            fac_s = -110.0 if t < 22.8 else -90.0
+            pos_s = (-1.45, 2.05, DOCK_Z)
+            fac_s = -108.0 if t < 22.8 else -90.0
             pull_t = clamp01((t - 20.4) / 0.55)
-            lift_bino = ease_cubic_in_out(clamp01((t - 22.9) / 0.95))
+            lift_bino = ease_cubic_in_out(clamp01((t - 22.85) / 0.95))
             shake = math.sin(t * 16.0) * 10.0 if 21.4 <= t <= 22.8 else 0.0
             if t < 22.8:
                 rh = (lerp(66.0, 82.0, pull_t), lerp(252.0, 206.0, pull_t), 34.0)
                 lh = (-54.0, 268.0, 18.0)
             else:
-                rh = (lerp(66.0, 32.0, lift_bino), lerp(230.0, 154.0, lift_bino), lerp(28.0, 56.0, lift_bino))
-                lh = (lerp(-54.0, -28.0, lift_bino), lerp(255.0, 158.0, lift_bino), lerp(20.0, 54.0, lift_bino))
+                # Both hands grip left & right barrels of brass binoculars EXACTLY at eye height (y=154px)!
+                rh = (lerp(62.0, 44.0, lift_bino), lerp(234.0, 152.0, lift_bino), lerp(28.0, 56.0, lift_bino))
+                lh = (lerp(-54.0, -42.0, lift_bino), lerp(254.0, 152.0, lift_bino), lerp(22.0, 56.0, lift_bino))
             rk_s = {
-                "animation": "free", "pelvis_y": 2.0, "torso_lean_deg": -4.0 if t < 22.2 else 4.0,
+                "animation": "free", "pelvis_y": 1.5, "torso_lean_deg": -3.0 if t < 22.2 else 3.0,
                 "head_tilt_deg": shake, "right_hand_target": rh, "left_hand_target": lh,
                 "eyes": "suspicious" if t < 22.9 else "chill",
                 "eyebrows": "angry" if 20.4 <= t <= 22.4 else "skeptical",
@@ -396,15 +478,14 @@ def get_characters_at_frame(
         pack("kapten_soren", pos_s, fac_s, rk_s)
 
     # ------------------------------------------------------------------
-    # SCENE 2: RJUKAN (Arka + Astrid + Kakek Henrik — ZERO TELEPORT, ZERO POLE CLIP!)
+    # SCENE 2: RJUKAN (Arka Natural Walk + Astrid + Kakek Henrik)
     # ------------------------------------------------------------------
     elif scene_name == "rjukan":
         arka_m = _lipsync_val(lipsync_curves, "arka", frame)
         astrid_m = _lipsync_val(lipsync_curves, "astrid", frame)
         henrik_m = _lipsync_val(lipsync_curves, "kakek_henrik", frame)
 
-        # ARKA CONTINUOUS PATH (Streetlamp pole is at (-2.65, -2.05) -> 1.1m clearance from Arka at (-1.55, -1.65)!)
-        if t < 31.8:
+        if t < 38.4:
             pos_a = (-1.55, -1.65, SQUARE_Z)
             fac_a = -80.0
             shiver = math.sin(t * 24.0) * 3.5
@@ -415,17 +496,27 @@ def get_characters_at_frame(
                 "eyes": "shocked" if t < 29.0 else "honey_oval", "eyebrows": "worried",
                 "mouth": "grit_teeth" if t < 29.0 else "confident_gap", "mouth_open": arka_m, "blush": True,
             }
-        elif t < 41.8:
-            # Smooth continuous walk from streetlamp to central sunlit square (happens smoothly while camera dives back!)
-            u = ease_cubic_in_out(clamp01((t - 38.5) / 3.0))
+        elif t < 41.6:
+            # NATURAL STRIDE-SYNCED WALK from streetlamp into the newly lit golden sunlit square!
+            dt_w = 3.2
+            u_raw = (t - 38.4) / dt_w
+            u = ease_cubic_in_out(u_raw)
+            du_dt = ease_cubic_in_out_deriv(u_raw) / dt_w
+            dx, dy = 0.50, 2.20
+            total_d = math.hypot(dx, dy)
+            walk_az = math.degrees(math.atan2(dy, dx))
             pos_a = (lerp(-1.55, -1.05, u), lerp(-1.65, 0.55, u), SQUARE_Z)
-            fac_a = lerp(-30.0, 15.0, u)
-            rk_a = {
-                "animation": "walk" if (38.5 <= t <= 41.5) else "free",
-                "pelvis_y": 0.0, "torso_lean_deg": 4.0, "head_tilt_deg": -8.0 if t > 39.2 else 2.0,
+            if u_raw < 0.16:
+                fac_a = lerp_angle_deg(-80.0, walk_az, u_raw / 0.16)
+            elif u_raw > 0.80:
+                fac_a = lerp_angle_deg(walk_az, 15.0, (u_raw - 0.80) / 0.20)
+            else:
+                fac_a = walk_az
+            rk_a = compute_natural_walk_rig(total_d * u, total_d * du_dt, stride_len_m=0.58)
+            rk_a.update({
                 "eyes": "starry" if t > 39.5 else "shocked", "eyebrows": "raised",
-                "mouth": "small_o" if t < 41.5 else "confident_gap", "mouth_open": arka_m, "eye_gaze_x": 0.35,
-            }
+                "mouth": "small_o" if t < 41.2 else "confident_gap", "mouth_open": arka_m, "eye_gaze_x": 0.30,
+            })
         elif t < 47.0:
             pos_a = (-1.05, 0.55, SQUARE_Z)
             fac_a = 15.0
@@ -435,19 +526,20 @@ def get_characters_at_frame(
                 "eyes": "starry", "eyebrows": "raised", "mouth": "confident_gap", "mouth_open": arka_m, "eye_gaze_x": 0.40,
             }
         else:
-            # Smoothly steps closer & leans in toward Henrik's sunglasses (Match-Cut!)
-            u = ease_cubic_in_out(clamp01((t - 47.0) / 1.3))
+            u_raw = clamp01((t - 47.0) / 1.3)
+            u = ease_cubic_in_out(u_raw)
+            du_dt = ease_cubic_in_out_deriv(u_raw) / 1.3
             pos_a = (lerp(-1.05, -0.35, u), lerp(0.55, 0.65, u), SQUARE_Z)
             fac_a = 10.0
-            rk_a = {
-                "animation": "free", "pelvis_y": 14.0 * u, "torso_lean_deg": 14.0 * u, "head_tilt_deg": 6.0,
-                "left_hand_target": (-42.0, 255.0, 24.0), "right_hand_target": (46.0, 248.0, 28.0),
+            rk_a = compute_natural_walk_rig(0.71 * u, 0.71 * du_dt, stride_len_m=0.55, arm_energy=0.6)
+            rk_a.update({
+                "torso_lean_deg": 12.0 * u, "head_tilt_deg": 6.0,
                 "eyes": "focused", "eyebrows": "raised", "mouth": "small_o", "mouth_open": arka_m, "eye_gaze_x": 0.45,
-            }
+            })
         pack("arka", pos_a, fac_a, rk_a)
 
-        # ASTRID on unobstructed cliffside heliostat deck (Z = CLIFF_DECK_Z = 24.0m!)
-        pos_ast = (-1.60, 21.60, CLIFF_DECK_Z)
+        # ASTRID on cliff deck at Y=22.0 (0.5m cleanly back from front railing -> railing stays below waist!)
+        pos_ast = (-1.60, 22.00, CLIFF_DECK_Z)
         tap_u = math.sin(clamp01((t - 33.5) / 0.45) * math.pi)
         pack("astrid", pos_ast, -95.0, {
             "animation": "free", "pelvis_y": math.sin(t * 2.2) * 1.5, "torso_lean_deg": 3.0,
@@ -459,29 +551,28 @@ def get_characters_at_frame(
             "eye_gaze_x": 0.12, "eye_gaze_y": 0.25 if t < 34.2 else -0.1,
         })
 
-        # KAKEK HENRIK cleanly in front of his striped beach chair (chair sits +0.34m BEHIND Henrik -> ZERO clipping!)
+        # KAKEK HENRIK relaxing naturally in striped beach chair
         pos_h = (0.95, 0.80, SQUARE_Z)
-        thumb_u = ease_out_overshoot(clamp01((t - 44.8) / 0.7), s=0.75)
+        thumb_u = ease_out_overshoot(clamp01((t - 45.2) / 0.7), s=0.75)
         sip_u = math.sin(clamp01((t - 42.2) / 1.8) * math.pi)
         pack("kakek_henrik", pos_h, -105.0, {
-            "animation": "free", "pelvis_y": 22.0 + math.sin(t * 2.0) * 1.6, "torso_lean_deg": -6.0,
+            "animation": "free", "pelvis_y": 24.0 + math.sin(t * 2.0) * 1.6, "torso_lean_deg": -6.0,
             "head_tilt_deg": 5.0 + math.sin(t * 1.8) * 2.5,
             "left_hand_target": (-42.0, 244.0 - sip_u * 48.0, 38.0 + sip_u * 14.0),
             "right_hand_target": (lerp(56.0, 88.0, thumb_u), lerp(258.0, 192.0, thumb_u), 40.0),
-            "left_foot_target": (-24.0, 474.0, 22.0), "right_foot_target": (24.0, 474.0, 22.0),
+            "left_foot_target": (-24.0, 474.0, 24.0), "right_foot_target": (24.0, 474.0, 24.0),
             "eyes": "happy", "eyebrows": "happy", "mouth": "happy_open", "mouth_open": max(0.25, henrik_m),
         })
 
     # ------------------------------------------------------------------
-    # SCENE 3: BAARLE (Arka + Bram + Clara — ZERO CLIPPING, ZERO FLICK, EXACT 1-FRAME CUT AT 70.0s!)
+    # SCENE 3: BAARLE (Bram Hand-Locked Cup Shove, Seated Clara, Hopping Arka!)
     # ------------------------------------------------------------------
     else:
         arka_m = _lipsync_val(lipsync_curves, "arka", frame)
         bram_m = _lipsync_val(lipsync_curves, "bram", frame)
         clara_m = _lipsync_val(lipsync_curves, "clara", frame)
 
-        if frame < 2100:  # Strictly 00:49.00 .. 01:09.97 (INSIDE CAFÉ — ZERO TELEPORTS!)
-            # ARKA: stands cleanly in open aisle (X=+1.05, Y=3.20 — >1.8m clear of Clara's table at X=-1.85!), hops across X=0 line at 53.5..55.0!
+        if frame < 2100:  # Strictly 00:49.00 .. 01:09.97 (INSIDE CAFÉ)
             if t < 53.4:
                 pos_a = (-0.35, 2.55, CAFE_FLOOR_Z)
                 fac_a = -75.0
@@ -491,17 +582,16 @@ def get_characters_at_frame(
                     "eyes": "honey_oval", "eyebrows": "thick_arch", "mouth": "confident_gap", "mouth_open": arka_m,
                 }
             elif t < 55.2:
-                # Playful continuous hop from Belgium (-0.35) -> Netherlands (+1.10)!
+                # Playful energetic spring-hop across the Belgian/Dutch floor border!
                 hop_u = clamp01((t - 53.4) / 1.8)
-                hop_arc = math.sin(hop_u * math.pi) * 0.28
-                pos_a = (lerp(-0.35, 1.10, ease_cubic_in_out(hop_u)), lerp(2.55, 3.35, ease_cubic_in_out(hop_u)), CAFE_FLOOR_Z + hop_arc)
-                fac_a = lerp(-75.0, -125.0, hop_u)
+                hop_arc = math.sin(hop_u * math.pi) * 0.30
+                pos_a = (lerp(-0.35, 1.12, ease_cubic_in_out(hop_u)), lerp(2.55, 3.35, ease_cubic_in_out(hop_u)), CAFE_FLOOR_Z + hop_arc)
+                fac_a = lerp(-75.0, -130.0, hop_u)
                 rk_a = {
                     "animation": "jump", "eyes": "starry", "eyebrows": "raised", "mouth": "happy_open", "mouth_open": arka_m,
                 }
             else:
-                # Stays continuously right there at (+1.10, 3.35) watching Bram & laughing with Clara (NEVER VANISHES!)
-                pos_a = (1.10, 3.35, CAFE_FLOOR_Z)
+                pos_a = (1.12, 3.35, CAFE_FLOOR_Z)
                 fac_a = -130.0
                 is_laugh = t >= 67.4
                 rk_a = {
@@ -514,40 +604,51 @@ def get_characters_at_frame(
                 }
             pack("arka", pos_a, fac_a, rk_a)
 
-            # BRAM: Standing on raised barista platform (BRAM_STEP_Z = 0.24) behind 0.86m bar counter (+0.78, 5.85)!
-            # Upper chest, apron & arms clear BAR_TOP_Z=0.86 cleanly; pastry case is far left at X=-2.25 -> ZERO CLIPPING!
-            pos_b = (0.78, 5.85, BRAM_STEP_Z)
-            fac_b = -95.0
-            # Snappy theatrical cup push synced EXACTLY to "diantar lintas negara ke Belgia!" (56.6s -> 58.2s)
-            slide_u = ease_snappy_ramp(clamp01((t - 56.55) / 1.65))
+            # BRAM: Standing on raised 0.31m oak duckboard behind 0.92m bar (Y=5.56) -> legs hidden (<0.85m), apron & arms 100% visible!
+            # Phase A (t < 56.55): Bram at X=+0.62 with his SCREEN-LEFT hand (left_hand_target at x=-66px, y=300px) resting DIRECTLY ON cup at X=+0.36!
+            # Phase B (56.55..57.45): Bram steps & leans left (X: +0.62 -> +0.16) as his hand stays LOCKED ON THE CUP pushing it across brass border X=0!
+            # Phase C (57.45..67.4): Dramatic follow-through arm extended toward Belgium as cup glides on momentum to X=-0.58!
+            push_u = ease_cubic_in_out(clamp01((t - 56.55) / 0.90))
+            settle_u = ease_cubic_in_out(clamp01((t - 57.50) / 0.90))
+            bram_x = lerp(0.62, 0.16, push_u)
+            pos_b = (bram_x, 5.56, BRAM_STEP_Z)
+            fac_b = lerp(-90.0, -104.0, push_u)
             is_laugh_b = t >= 67.4
             if is_laugh_b:
                 rk_b = {"animation": "laugh", "eyes": "happy", "eyebrows": "happy", "mouth": "happy_open", "mouth_open": 0.6}
             else:
+                # Screen-left arm (left_hand_target, x<0) rests directly on the cup at bar top height (y=298px, forward z=54px) & shoves it left!
+                lh_x = lerp(-62.0, -96.0, push_u) + 12.0 * settle_u
+                lh_y = lerp(298.0, 294.0, push_u) - 18.0 * settle_u
+                rh_x = lerp(52.0, 32.0, push_u)
+                rh_y = lerp(282.0, 276.0, push_u)
                 rk_b = {
-                    "animation": "free", "pelvis_y": math.sin(t * 3.0) * 2.0,
-                    "torso_lean_deg": lerp(4.0, -9.0, slide_u), "head_tilt_deg": lerp(-4.0, 6.0, slide_u),
-                    "right_hand_target": (lerp(42.0, -76.0, slide_u), 228.0, 44.0),
-                    "left_hand_target": (-44.0, 254.0, 26.0),
+                    "animation": "free",
+                    "pelvis_y": math.sin(t * 3.0) * 1.6 + push_u * 3.0 * (1.0 - settle_u),
+                    "torso_lean_deg": lerp(4.0, -14.0, push_u) + 8.0 * settle_u,
+                    "head_tilt_deg": lerp(-3.0, 7.0, push_u),
+                    "left_hand_target": (lh_x, lh_y, 58.0),
+                    "right_hand_target": (rh_x, rh_y, 26.0),
                     "eyes": "honey_oval", "eyebrows": "raised",
-                    "mouth": "grin_teeth" if slide_u > 0.25 else "smirk", "mouth_open": bram_m,
-                    "eye_gaze_x": lerp(0.1, -0.38, slide_u),
+                    "mouth": "grin_teeth" if push_u > 0.25 else "smirk", "mouth_open": bram_m,
+                    "eye_gaze_x": lerp(-0.15, -0.45, push_u),
                 }
             pack("bram", pos_b, fac_b, rk_b)
 
-            # CLARA: Seated cleanly at (-0.85, 3.65, CAFE_FLOOR_Z) with chair placed BEHIND her (+0.32m in +Y) and bistro table at (-1.85, 3.60) -> ZERO CLIPPING!
-            pos_c = (-0.85, 3.65, CAFE_FLOOR_Z)
-            fac_c = -65.0
+            # CLARA: Seated naturally at (-0.85, 3.74, 0.0) directly in front of her rattan chair (-0.85, 3.92) with knees bent & feet clear!
+            pos_c = (-0.85, 3.74, CAFE_FLOOR_Z)
+            fac_c = -68.0
             lift_feet = ease_out_overshoot(clamp01((t - 66.8) / 0.85), s=0.90)
             look_down = ease_cubic_in_out(clamp01((t - 59.8) / 0.8))
             rk_c = {
-                "animation": "free", "pelvis_y": 16.0 + lift_feet * 4.0,
-                "torso_lean_deg": lerp(2.0, 8.0, look_down) * (1.0 - lift_feet * 0.6),
+                "animation": "free",
+                "pelvis_y": 30.0 + lift_feet * 5.0,  # Lower seated hip height so she visibly sits on chair cushion!
+                "torso_lean_deg": lerp(3.0, 9.0, look_down) * (1.0 - lift_feet * 0.65),
                 "head_tilt_deg": lerp(2.0, 12.0, look_down),
-                "left_foot_target": (-20.0, lerp(474.0, 408.0, lift_feet), lerp(10.0, 32.0, lift_feet)),
-                "right_foot_target": (24.0, lerp(474.0, 408.0, lift_feet), lerp(10.0, 32.0, lift_feet)),
-                "left_hand_target": (-42.0, lerp(250.0, 212.0, look_down), 34.0),
-                "right_hand_target": (52.0, lerp(244.0, 226.0, lift_feet), 34.0),
+                "left_foot_target": (-20.0, lerp(468.0, 396.0, lift_feet), lerp(36.0, 52.0, lift_feet)),
+                "right_foot_target": (24.0, lerp(468.0, 396.0, lift_feet), lerp(36.0, 52.0, lift_feet)),
+                "left_hand_target": (-42.0, lerp(256.0, 218.0, look_down), 36.0),
+                "right_hand_target": (50.0, lerp(250.0, 226.0, lift_feet), 36.0),
                 "eyes": "shocked" if 60.0 <= t < 66.8 else ("happy" if t >= 68.5 else "honey_oval"),
                 "eyebrows": "skeptical" if t < 68.5 else "raised",
                 "mouth": "small_o" if t < 66.8 else "happy_open",
@@ -557,7 +658,6 @@ def get_characters_at_frame(
             pack("clara", pos_c, fac_c, rk_c)
         else:
             # EXACT 1-FRAME SAFE CUT AT frame 2100 (70.00s): Golden-hour Baarle street finale!
-            # Arka straddles B | NL border outside at (0.0, -2.35), Bram & Clara wave cheerfully from sunlit doorway!
             sip_u = math.sin(clamp01((t - 71.2) / 1.4) * math.pi)
             snap_u = ease_out_overshoot(clamp01((t - 73.9) / 0.45), s=1.0)
             is_wink = t >= 73.6
@@ -578,13 +678,12 @@ def get_characters_at_frame(
 
 
 # ============================================================================
-# 4. HERO PROP & DYNAMIC LIGHTING TIMELINE SYNC
+# 4. HERO PROP & DYNAMIC LIGHTING TIMELINE SYNC (100% HAND-LOCKED CUP!)
 # ============================================================================
 
 def get_scene_dynamic_state(scene_name: str, frame: int) -> Dict[str, Any]:
     t = frame / FPS
     if scene_name == "diomede":
-        # Short crisp lens-flare glint only in final 8 frames (24.72..25.00s) — NO long dull gray fade!
         flare = clamp01((t - 24.68) / 0.28) if t >= 24.68 else 0.0
         return {
             "snowball_pos": (-0.98, 1.32, DOCK_Z + 1.44 + math.sin(t * 4.5) * 0.035),
@@ -593,14 +692,13 @@ def get_scene_dynamic_state(scene_name: str, frame: int) -> Dict[str, Any]:
             "ice_crack_factor": clamp01((t - 19.55) / 0.4),
             "dateline_pulse": 0.8 + 0.2 * math.sin(t * 5.0),
             "lens_flare_strength": flare,
-            "soren_bino_raise": ease_cubic_in_out(clamp01((t - 22.9) / 0.95)),
+            "soren_bino_raise": ease_cubic_in_out(clamp01((t - 22.85) / 0.95)),
         }
 
     if scene_name == "rjukan":
         mirror_pivot = ease_cubic_in_out(clamp01((t - 34.0) / 2.4))
         beam_shoot = ease_expo_in_out(clamp01((t - 36.4) / 3.0))
         square_lit = ease_out_overshoot(clamp01((t - 39.2) / 0.9), s=0.4)
-        # Crisp 6-frame golden sunglasses glint match-cut at 48.75..49.0s (NO dull gray fade!)
         match_flash = clamp01((t - 48.72) / 0.24) if t >= 48.72 else 0.0
         return {
             "mirror_pivot": mirror_pivot,
@@ -609,11 +707,19 @@ def get_scene_dynamic_state(scene_name: str, frame: int) -> Dict[str, Any]:
             "match_flash": match_flash,
         }
 
-    # Baarle: Snappy latte cup glide across NL (+0.45) -> B (-0.45) on top of BAR_TOP_Z=0.86 synced to "diantar lintas negara"!
-    cup_slide = ease_snappy_ramp(clamp01((t - 56.55) / 1.65))
+    # Baarle: 2-stage physically coupled latte slide on BAR_TOP_Z=0.92!
+    # Stage 1 (56.55..57.45): Locked directly against Bram's left hand (+0.36 -> -0.22 across X=0 brass line!)
+    # Stage 2 (57.45..58.25): Smooth oak friction deceleration glide (-0.22 -> -0.60 into Belgium!)
+    if t <= 56.55:
+        cup_x = 0.36
+    elif t <= 57.45:
+        cup_x = lerp(0.36, -0.22, ease_cubic_in_out((t - 56.55) / 0.90))
+    else:
+        cup_x = lerp(-0.22, -0.60, ease_out_cubic(clamp01((t - 57.45) / 0.80)))
+
     return {
         "latte_visible": frame < 2100,
-        "latte_pos": (lerp(0.45, -0.45, cup_slide), 4.96, BAR_TOP_Z + 0.015),
+        "latte_pos": (cup_x, 5.10, BAR_TOP_Z + 0.008),
         "arka_finale_cup_visible": frame >= 2100,
         "arka_finale_cup_pos": (-0.28, -2.56, 1.16 + math.sin(clamp01((t - 71.2) / 1.4) * math.pi) * 0.22),
         "glitch_outro": clamp01((t - 74.68) / 0.28) if t >= 74.68 else 0.0,

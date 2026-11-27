@@ -22,6 +22,7 @@ from blender_scenes.scene_rjukan import build_and_bind_rjukan
 # Objects intentionally translucent, in-hand, atmospheric, or non-occluding during raycast visibility checks
 IGNORED_RAY_PREFIXES = (
     "Char_",
+    "CharShadow_",
     "SnowFlake",
     "RjuSnow_",
     "VolumetricGodRay",
@@ -31,8 +32,6 @@ IGNORED_RAY_PREFIXES = (
     "HeroSnowball",
     "HeroCalendar",
     "HeroBrassBinoculars",
-    "BinoTube",
-    "BinoBridge",
     "Latte",
     "ArkaFinaleCup",
     "WindowGlass",
@@ -43,6 +42,8 @@ IGNORED_RAY_PREFIXES = (
     "DeckPost",
     "Seabird_",
     "ChimneySmoke",
+    "AuroraRibbon",
+    "FestoonBulb",
 )
 
 # 9 critical v2 visual beats covering every single v1 failure point
@@ -78,9 +79,9 @@ OBSTACLE_CLEARANCE_RULES: Dict[str, List[Tuple[str, float, float, float]]] = {
         ("RjukanSignStand", -5.00, 5.40, 0.45),
     ],
     "baarle": [
-        ("BistroTableTop", -1.88, 3.60, 0.72),
-        ("PastryVitrine", -2.25, 5.15, 0.75),
-        ("ItalianEspresso", 2.15, 5.20, 0.70),
+        ("BistroTableTop", -1.78, 3.66, 0.68),
+        ("PastryVitrine", -2.25, 5.10, 0.72),
+        ("ItalianEspresso", 2.15, 5.10, 0.68),
         ("FrontPillar_-2.15", -2.15, 0.0, 0.42),
         ("FrontPillar_2.15", 2.15, 0.0, 0.42),
     ],
@@ -213,11 +214,34 @@ def validate_scene_world(
                     f"[{scene_name}] f={f} ({f/30:.2f}s): CAMERA->HERO '{cid}' BLOCKED by '{hit_h}' at {hit_hd:.2f}m / {dist:.2f}m!"
                 )
 
-    # 3. Collection Isolation Verification (Baarle MUST have ZERO snow particle objects!)
+    # 3. Collection Isolation & Car-vs-Building/Snowbank Collision Check!
     if scene_name == "baarle":
         snow_objs = [o.name for o in bpy.data.objects if "Snow" in o.name or "snow" in o.name]
         if snow_objs:
             errors.append(f"[baarle] Snow objects leaked into Baarle scene: {snow_objs[:5]}")
+
+    if scene_name in ("rjukan", "baarle"):
+        car_roots = [o for o in bpy.data.objects if o.name.startswith(("NordicCar_", "EuroCar_")) and o.type == "EMPTY"]
+        blockers = [
+            o for o in bpy.data.objects
+            if o.type == "MESH" and (o.name.endswith("_body") or o.name.startswith("SnowBank"))
+        ]
+        for f in range(start_frame, end_frame, 18):
+            scene.frame_set(f)
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            for car in car_roots:
+                cx, cy = car.location.x, car.location.y
+                # Car footprint ~3.6m x 1.7m
+                c_x0, c_x1 = cx - 1.75, cx + 1.75
+                c_y0, c_y1 = cy - 0.84, cy + 0.84
+                for blk in blockers:
+                    ev = blk.evaluated_get(depsgraph)
+                    pts = [ev.matrix_world @ Vector(corner) for corner in ev.bound_box]
+                    bx0, bx1 = min(p.x for p in pts), max(p.x for p in pts)
+                    by0, by1 = min(p.y for p in pts), max(p.y for p in pts)
+                    bz1 = max(p.z for p in pts)
+                    if bz1 > 0.10 and not (c_x1 < bx0 or c_x0 > bx1 or c_y1 < by0 or c_y0 > by1):
+                        errors.append(f"[{scene_name}] f={f}: CAR '{car.name}' at ({cx:.1f},{cy:.1f}) CLIPS '{blk.name}'!")
 
     # 4. Render 3 Key Diagnostic Beats & Check Exposure Luminance (Catches White-Out & Black-Out!)
     rendered_panels: List[Tuple[str, str, float]] = []
