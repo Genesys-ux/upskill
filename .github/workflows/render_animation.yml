@@ -21,11 +21,11 @@ on:
 
 env:
   BLENDER_VERSION: "4.2.3"
-  BLENDER_URL: "https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz"
+  BLENDER_URLS: "https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz https://ftp.nluug.nl/pub/graphics/blender/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz https://mirrors.ocf.berkeley.edu/blender/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz"
 
 jobs:
   prepare_assets:
-    name: "1. Build Audio VO, SFX, Lip-Sync & Decals"
+    name: "1. Build Audio VO, SFX, Lip-Sync, Decals & Cache Blender"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Cache Blender ${{ env.BLENDER_VERSION }} LTS (1x download for all matrix jobs)
+        id: cache-blender-prep
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64-v2
+
+      - name: Download Blender 1x with mirror fallback
+        if: steps.cache-blender-prep.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/blender"
+          for url in $BLENDER_URLS; do
+            echo "Trying $url ..."
+            if curl -fsSL --retry 3 --retry-delay 4 -A "Mozilla/5.0 (X11; Linux x86_64) GitHubActions" "$url" -o /tmp/blender.tar.xz; then
+              tar -xJf /tmp/blender.tar.xz --strip-components=1 -C "$HOME/blender"
+              rm -f /tmp/blender.tar.xz
+              break
+            fi
+          done
+          test -x "$HOME/blender/blender"
 
       - name: Install system FFmpeg & fonts
         run: |
@@ -84,20 +105,26 @@ jobs:
           name: prepared-audio-decals
           path: .
 
-      - name: Cache Blender ${{ env.BLENDER_VERSION }} LTS
+      - name: Restore cached Blender ${{ env.BLENDER_VERSION }} LTS
         id: cache-blender
         uses: actions/cache@v4
         with:
           path: ~/blender
-          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64-v2
 
-      - name: Install Blender, Xvfb, Mesa OpenGL/EGL & FFmpeg
+      - name: Install Xvfb, Mesa OpenGL/EGL & FFmpeg (fallback Blender if cache miss)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb libegl1 libegl-mesa0 libgbm1 libglx-mesa0 libopengl0 libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 libxrandr2 libxcursor1 libxinerama1 ffmpeg
           if [ ! -x "$HOME/blender/blender" ]; then
             mkdir -p "$HOME/blender"
-            curl -fsSL "$BLENDER_URL" | tar -xJ --strip-components=1 -C "$HOME/blender"
+            for url in $BLENDER_URLS; do
+              if curl -fsSL --retry 3 --retry-delay 5 -A "Mozilla/5.0 (X11; Linux x86_64) GitHubActions" "$url" -o /tmp/blender.tar.xz; then
+                tar -xJf /tmp/blender.tar.xz --strip-components=1 -C "$HOME/blender"
+                rm -f /tmp/blender.tar.xz
+                break
+              fi
+            done
           fi
           "$HOME/blender/blender" --version
 
@@ -186,19 +213,25 @@ jobs:
           name: prepared-audio-decals
           path: .
 
-      - name: Cache Blender ${{ env.BLENDER_VERSION }} LTS
+      - name: Restore cached Blender ${{ env.BLENDER_VERSION }} LTS
         uses: actions/cache@v4
         with:
           path: ~/blender
-          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64-v2
 
-      - name: Install Blender, Xvfb, Mesa OpenGL/EGL & FFmpeg
+      - name: Install Xvfb, Mesa OpenGL/EGL & FFmpeg (fallback Blender if cache miss)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb libegl1 libegl-mesa0 libgbm1 libglx-mesa0 libopengl0 libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 libxrandr2 libxcursor1 libxinerama1 ffmpeg
           if [ ! -x "$HOME/blender/blender" ]; then
             mkdir -p "$HOME/blender"
-            curl -fsSL "$BLENDER_URL" | tar -xJ --strip-components=1 -C "$HOME/blender"
+            for url in $BLENDER_URLS; do
+              if curl -fsSL --retry 3 --retry-delay 5 -A "Mozilla/5.0 (X11; Linux x86_64) GitHubActions" "$url" -o /tmp/blender.tar.xz; then
+                tar -xJf /tmp/blender.tar.xz --strip-components=1 -C "$HOME/blender"
+                rm -f /tmp/blender.tar.xz
+                break
+              fi
+            done
           fi
 
       - name: Install Python character engine dependencies
