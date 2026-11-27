@@ -1,4 +1,4 @@
-"""Blender 4.2 EEVEE Next Mid-Poly Cel-Shaded PBR Shader Library, Character Card Rig & Compositor."""
+"""Blender 4.2 EEVEE Next Mid-Poly Cel-Shaded World-Space PBR Shader Library, 2.5D Hero/NPC Cards & Compositor (v2)."""
 from __future__ import annotations
 
 import math
@@ -41,11 +41,25 @@ def clear_scene() -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
+def get_or_create_collection(name: str) -> bpy.types.Collection:
+    if name in bpy.data.collections:
+        return bpy.data.collections[name]
+    col = bpy.data.collections.new(name)
+    bpy.context.scene.collection.children.link(col)
+    return col
+
+
+def link_to_collection(obj: bpy.types.Object, col: bpy.types.Collection) -> None:
+    for c in list(obj.users_collection):
+        c.objects.unlink(obj)
+    col.objects.link(obj)
+
+
 def configure_render_eevee(
     width: int = 720,
     height: int = 1280,
     fps: int = 30,
-    samples: int = 24,
+    samples: int = 8,
     use_motion_blur: bool = True,
 ) -> bpy.types.Scene:
     scene = bpy.context.scene
@@ -78,17 +92,16 @@ def configure_render_eevee(
     if hasattr(ee, "volumetric_end"):
         ee.volumetric_end = 135.0
     if hasattr(ee, "shadow_resolution_scale"):
-        ee.shadow_resolution_scale = 0.65 if width <= 720 else 0.85
+        ee.shadow_resolution_scale = 0.70 if width <= 720 else 0.90
     if hasattr(ee, "use_bloom"):
         ee.use_bloom = True
-        ee.bloom_threshold = 1.15
-        ee.bloom_intensity = 0.14
+        ee.bloom_threshold = 2.0
+        ee.bloom_intensity = 0.06
     if hasattr(ee, "use_raytracing"):
         ee.use_raytracing = False
     if hasattr(scene.render, "use_persistent_data"):
         scene.render.use_persistent_data = True
 
-    # Rich vibrant color management
     scene.view_settings.view_transform = "AgX" if "AgX" in [
         v.identifier for v in scene.view_settings.bl_rna.properties["view_transform"].enum_items
     ] else "Filmic"
@@ -98,9 +111,9 @@ def configure_render_eevee(
             if preferred in looks:
                 scene.view_settings.look = preferred
                 break
-    scene.view_settings.exposure = 0.15
+    scene.view_settings.exposure = 0.05
 
-    # Compositor: subtle stylized Glare (Fog Glow) + Transition Flash / Glitch mix node
+    # Controlled Compositor: Gentle Glare (prevents white-out on Rjukan!) + Crisp Transition Flash node
     scene.use_nodes = True
     nt = scene.node_tree
     nt.nodes.clear()
@@ -108,14 +121,13 @@ def configure_render_eevee(
     n_glare = nt.nodes.new("CompositorNodeGlare")
     n_glare.glare_type = "FOG_GLOW"
     n_glare.quality = "MEDIUM"
-    n_glare.threshold = 1.15
-    n_glare.mix = -0.35
-    n_glare.size = 7
+    n_glare.threshold = 2.35  # High threshold keeps snow & 2.5D ink outlines razor sharp!
+    n_glare.mix = -0.68
+    n_glare.size = 6
 
-    # Dynamic transition flash overlay (driven per-frame via scene_flash_node.inputs[0])
     n_flash_col = nt.nodes.new("CompositorNodeRGB")
     n_flash_col.name = "TransitionFlashColor"
-    n_flash_col.outputs[0].default_value = (1.0, 0.92, 0.72, 1.0)
+    n_flash_col.outputs[0].default_value = (1.0, 0.94, 0.78, 1.0)
 
     n_flash_mix = nt.nodes.new("CompositorNodeMixRGB")
     n_flash_mix.name = "TransitionFlashMix"
@@ -127,7 +139,6 @@ def configure_render_eevee(
     nt.links.new(n_glare.outputs["Image"], n_flash_mix.inputs[1])
     nt.links.new(n_flash_col.outputs["RGBA"], n_flash_mix.inputs[2])
     nt.links.new(n_flash_mix.outputs["Image"], n_out.inputs["Image"])
-
     return scene
 
 
@@ -139,11 +150,11 @@ def set_transition_flash(scene: bpy.types.Scene, strength: float, color: Tuple[f
     if col_n:
         col_n.outputs[0].default_value = (color[0], color[1], color[2], 1.0)
     if mix_n:
-        mix_n.inputs[0].default_value = max(0.0, min(1.0, float(strength)))
+        mix_n.inputs[0].default_value = max(0.0, min(0.85, float(strength)))
 
 
 # ============================================================================
-# PROCEDURAL MID-POLY CEL-SHADED + PBR SEMI-REALISTIC MATERIALS
+# WORLD-SPACE PBR + CEL-SHADED SEMI-REALISTIC MATERIALS (NO STRETCHING!)
 # ============================================================================
 
 def make_cel_pbr_material(
@@ -152,13 +163,13 @@ def make_cel_pbr_material(
     shadow_tint: Tuple[float, float, float] = (0.28, 0.38, 0.58),
     roughness: float = 0.55,
     metallic: float = 0.0,
-    bump_scale: float = 18.0,
-    bump_strength: float = 0.16,
+    bump_scale: float = 2.5,
+    bump_strength: float = 0.20,
     pattern: str = "noise",  # noise | wood | brick | cobble | snow | water | metal
     color_b: Optional[Tuple[float, float, float]] = None,
     emission_strength: float = 0.0,
 ) -> bpy.types.Material:
-    """Mid-poly Cel-Shaded Semi-Realistic material combining ShaderToRGB toon bands with real PBR bump & roughness."""
+    """Mid-poly Cel-Shaded Semi-Realistic material using World-Space Position so bricks/wood/cobble NEVER stretch."""
     if name in bpy.data.materials:
         return bpy.data.materials[name]
 
@@ -169,32 +180,46 @@ def make_cel_pbr_material(
 
     n_out = nt.nodes.new("ShaderNodeOutputMaterial")
     n_bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
-    n_texcoord = nt.nodes.new("ShaderNodeTexCoord")
+    # TRUE WORLD-SPACE COORDINATES (meters) so bricks & wood planks stay uniform on EVERY building/wall!
+    n_geom = nt.nodes.new("ShaderNodeNewGeometry")
     n_map = nt.nodes.new("ShaderNodeMapping")
-    nt.links.new(n_texcoord.outputs["Object"], n_map.inputs["Vector"])
+    nt.links.new(n_geom.outputs["Position"], n_map.inputs["Vector"])
 
-    # Procedural realistic PBR surface texture (albedo variation + bump + roughness variation)
-    col2 = color_b or (base_color[0] * 0.78, base_color[1] * 0.78, base_color[2] * 0.80)
+    col2 = color_b or (base_color[0] * 0.76, base_color[1] * 0.76, base_color[2] * 0.78)
     n_bump = nt.nodes.new("ShaderNodeBump")
     n_bump.inputs["Strength"].default_value = bump_strength
-    n_bump.inputs["Distance"].default_value = 0.04
+    n_bump.inputs["Distance"].default_value = 0.035
 
     if pattern == "brick":
+        # Project X+Y onto U and Z onto V so bricks wrap cleanly on ALL vertical walls (X-facing & Y-facing)!
+        n_sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+        n_add = nt.nodes.new("ShaderNodeMath")
+        n_add.operation = "ADD"
+        n_comb = nt.nodes.new("ShaderNodeCombineXYZ")
+        nt.links.new(n_geom.outputs["Position"], n_sep.inputs["Vector"])
+        nt.links.new(n_sep.outputs["X"], n_add.inputs[0])
+        nt.links.new(n_sep.outputs["Y"], n_add.inputs[1])
+        nt.links.new(n_add.outputs["Value"], n_comb.inputs["X"])
+        nt.links.new(n_sep.outputs["Z"], n_comb.inputs["Y"])
+
         n_tex = nt.nodes.new("ShaderNodeTexBrick")
-        n_tex.inputs["Scale"].default_value = bump_scale
-        n_tex.inputs["Mortar Size"].default_value = 0.025
+        n_tex.inputs["Scale"].default_value = max(1.2, bump_scale * 0.25)
+        n_tex.inputs["Brick Width"].default_value = 0.42
+        n_tex.inputs["Row Height"].default_value = 0.16
+        n_tex.inputs["Mortar Size"].default_value = 0.018
+        n_tex.inputs["Mortar Smooth"].default_value = 0.15
         n_tex.inputs["Color1"].default_value = (*base_color, 1.0)
         n_tex.inputs["Color2"].default_value = (*col2, 1.0)
-        n_tex.inputs["Mortar"].default_value = (0.38, 0.35, 0.32, 1.0)
-        nt.links.new(n_map.outputs["Vector"], n_tex.inputs["Vector"])
+        n_tex.inputs["Mortar"].default_value = (0.58, 0.54, 0.48, 1.0)
+        nt.links.new(n_comb.outputs["Vector"], n_tex.inputs["Vector"])
         albedo_out = n_tex.outputs["Color"]
         height_out = n_tex.outputs["Fac"]
     elif pattern == "wood":
-        n_map.inputs["Scale"].default_value = (1.0, 6.5, 1.0)
+        n_map.inputs["Scale"].default_value = (0.8, 3.2, 1.8)
         n_tex = nt.nodes.new("ShaderNodeTexNoise")
-        n_tex.inputs["Scale"].default_value = bump_scale
+        n_tex.inputs["Scale"].default_value = max(1.5, bump_scale * 0.35)
         n_tex.inputs["Detail"].default_value = 8.0
-        n_tex.inputs["Distortion"].default_value = 1.4
+        n_tex.inputs["Distortion"].default_value = 1.6
         nt.links.new(n_map.outputs["Vector"], n_tex.inputs["Vector"])
         _, fac_i, a_i, b_i, res_o = make_mix_rgba(nt, "MIX", 0.5)
         a_i.default_value = (*col2, 1.0)
@@ -205,17 +230,17 @@ def make_cel_pbr_material(
     elif pattern == "cobble":
         n_tex = nt.nodes.new("ShaderNodeTexVoronoi")
         n_tex.feature = "DISTANCE_TO_EDGE"
-        n_tex.inputs["Scale"].default_value = bump_scale
+        n_tex.inputs["Scale"].default_value = max(2.2, bump_scale * 0.28)
         nt.links.new(n_map.outputs["Vector"], n_tex.inputs["Vector"])
         _, fac_i, a_i, b_i, res_o = make_mix_rgba(nt, "MIX", 0.5)
-        a_i.default_value = (col2[0] * 0.65, col2[1] * 0.65, col2[2] * 0.68, 1.0)
+        a_i.default_value = (col2[0] * 0.60, col2[1] * 0.60, col2[2] * 0.64, 1.0)
         b_i.default_value = (*base_color, 1.0)
         nt.links.new(n_tex.outputs["Distance"], fac_i)
         albedo_out = res_o
         height_out = n_tex.outputs["Distance"]
     else:
         n_tex = nt.nodes.new("ShaderNodeTexNoise")
-        n_tex.inputs["Scale"].default_value = bump_scale
+        n_tex.inputs["Scale"].default_value = max(0.8, bump_scale * 0.22)
         n_tex.inputs["Detail"].default_value = 6.0 if pattern != "water" else 4.0
         n_tex.inputs["Roughness"].default_value = 0.62
         nt.links.new(n_map.outputs["Vector"], n_tex.inputs["Vector"])
@@ -230,12 +255,11 @@ def make_cel_pbr_material(
     nt.links.new(albedo_out, n_bsdf.inputs["Base Color"])
     nt.links.new(n_bump.outputs["Normal"], n_bsdf.inputs["Normal"])
 
-    # Roughness modulation for realistic surface tactile contrast (e.g., wet icy wood, cobblestone sheen)
     n_rmap = nt.nodes.new("ShaderNodeMapRange")
     n_rmap.inputs["From Min"].default_value = 0.25
     n_rmap.inputs["From Max"].default_value = 0.78
-    n_rmap.inputs["To Min"].default_value = max(0.05, roughness - 0.18)
-    n_rmap.inputs["To Max"].default_value = min(0.98, roughness + 0.16)
+    n_rmap.inputs["To Min"].default_value = max(0.06, roughness - 0.16)
+    n_rmap.inputs["To Max"].default_value = min(0.96, roughness + 0.14)
     nt.links.new(height_out, n_rmap.inputs["Value"])
     nt.links.new(n_rmap.outputs["Result"], n_bsdf.inputs["Roughness"])
 
@@ -245,25 +269,23 @@ def make_cel_pbr_material(
         set_in(n_bsdf, "Emission Color", (*base_color, 1.0))
         set_in(n_bsdf, "Emission Strength", emission_strength)
 
-    # Stylized Cel-Shaded response via ShaderToRGB + 3-band ColorRamp tinted with cool blue shade!
-    if emission_strength > 0.5 or metallic > 0.8:
+    if emission_strength > 0.5 or metallic > 0.78:
         nt.links.new(n_bsdf.outputs["BSDF"], n_out.inputs["Surface"])
     else:
         n_s2r = nt.nodes.new("ShaderNodeShaderToRGB")
         n_ramp = nt.nodes.new("ShaderNodeValToRGB")
         n_ramp.color_ramp.interpolation = "EASE"
         el0 = n_ramp.color_ramp.elements[0]
-        el0.position = 0.06
+        el0.position = 0.08
         el0.color = (shadow_tint[0], shadow_tint[1], shadow_tint[2], 1.0)
         el1 = n_ramp.color_ramp.elements[1]
-        el1.position = 0.48
-        el1.color = (0.96, 0.96, 0.97, 1.0)
-        el2 = n_ramp.color_ramp.elements.new(0.86)
-        el2.color = (1.12, 1.10, 1.05, 1.0)
+        el1.position = 0.50
+        el1.color = (0.94, 0.94, 0.95, 1.0)
+        el2 = n_ramp.color_ramp.elements.new(0.88)
+        el2.color = (1.06, 1.04, 1.00, 1.0)
 
-        # Multiply stylized toon light bands with tactile PBR surface texture + subtle original lighting blend
         _, _, m_a, m_b, m_res = make_mix_rgba(nt, "MULTIPLY", 0.85)
-        _, _, b_a, b_b, b_res = make_mix_rgba(nt, "MIX", 0.58)  # 58% crisp cel-shade + 42% rich PBR lighting
+        _, _, b_a, b_b, b_res = make_mix_rgba(nt, "MIX", 0.62)
 
         n_emit = nt.nodes.new("ShaderNodeEmission")
         n_emit.inputs["Strength"].default_value = 1.0
@@ -283,7 +305,7 @@ def make_cel_pbr_material(
 def make_emissive_material(
     name: str,
     color: Tuple[float, float, float],
-    strength: float = 4.0,
+    strength: float = 3.0,
     alpha: float = 1.0,
 ) -> bpy.types.Material:
     if name in bpy.data.materials:
@@ -312,6 +334,95 @@ def make_emissive_material(
     return mat
 
 
+def make_soft_godray_material(
+    name: str = "SoftVolumetricGodRay",
+    color: Tuple[float, float, float] = (1.0, 0.84, 0.42),
+    strength: float = 0.38,
+    max_opacity: float = 0.28,
+) -> bpy.types.Material:
+    """Layer-Weight (Facing) feathered volumetric god-ray cone — soft golden glow with ZERO white-out or solid plastic edge!"""
+    if name in bpy.data.materials:
+        return bpy.data.materials[name]
+    mat = bpy.data.materials.new(name=name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+
+    n_out = nt.nodes.new("ShaderNodeOutputMaterial")
+    n_lw = nt.nodes.new("ShaderNodeLayerWeight")
+    n_lw.inputs["Blend"].default_value = 0.35
+
+    # Facing is 1.0 at grazing edges, 0.0 at center -> invert so edges fade cleanly to 0.0 transparent!
+    n_ramp = nt.nodes.new("ShaderNodeValToRGB")
+    n_ramp.color_ramp.interpolation = "EASE"
+    el0 = n_ramp.color_ramp.elements[0]
+    el0.position = 0.0
+    el0.color = (max_opacity, max_opacity, max_opacity, 1.0)
+    el1 = n_ramp.color_ramp.elements[1]
+    el1.position = 0.72
+    el1.color = (0.0, 0.0, 0.0, 1.0)
+
+    n_trans = nt.nodes.new("ShaderNodeBsdfTransparent")
+    n_emit = nt.nodes.new("ShaderNodeEmission")
+    n_emit.inputs["Color"].default_value = (*color, 1.0)
+    n_emit.inputs["Strength"].default_value = strength
+    n_mix = nt.nodes.new("ShaderNodeMixShader")
+
+    nt.links.new(n_lw.outputs["Facing"], n_ramp.inputs["Fac"])
+    nt.links.new(n_ramp.outputs["Color"], n_mix.inputs["Fac"])
+    nt.links.new(n_trans.outputs["BSDF"], n_mix.inputs[1])
+    nt.links.new(n_emit.outputs["Emission"], n_mix.inputs[2])
+    nt.links.new(n_mix.outputs["Shader"], n_out.inputs["Surface"])
+
+    if hasattr(mat, "surface_render_method"):
+        mat.surface_render_method = "BLENDED"
+    elif hasattr(mat, "blend_method"):
+        mat.blend_method = "BLEND"
+    return mat
+
+
+def make_hologram_curtain_material(name: str = "ThinHoloDateLineCurtain") -> bpy.types.Material:
+    """Thin, crisp translucent holographic International Date Line curtain (never opaque neon wall!)."""
+    if name in bpy.data.materials:
+        return bpy.data.materials[name]
+    mat = bpy.data.materials.new(name=name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+
+    n_out = nt.nodes.new("ShaderNodeOutputMaterial")
+    n_geom = nt.nodes.new("ShaderNodeNewGeometry")
+    n_wave = nt.nodes.new("ShaderNodeTexWave")
+    n_wave.wave_type = "BANDS"
+    n_wave.bands_direction = "Z"
+    n_wave.inputs["Scale"].default_value = 3.5
+    nt.links.new(n_geom.outputs["Position"], n_wave.inputs["Vector"])
+
+    n_ramp = nt.nodes.new("ShaderNodeValToRGB")
+    n_ramp.color_ramp.elements[0].position = 0.35
+    n_ramp.color_ramp.elements[0].color = (0.03, 0.03, 0.03, 1.0)
+    n_ramp.color_ramp.elements[1].position = 0.85
+    n_ramp.color_ramp.elements[1].color = (0.16, 0.16, 0.16, 1.0)
+
+    n_trans = nt.nodes.new("ShaderNodeBsdfTransparent")
+    n_emit = nt.nodes.new("ShaderNodeEmission")
+    n_emit.inputs["Color"].default_value = (1.0, 0.22, 0.16, 1.0)
+    n_emit.inputs["Strength"].default_value = 3.5
+    n_mix = nt.nodes.new("ShaderNodeMixShader")
+
+    nt.links.new(n_wave.outputs["Fac"], n_ramp.inputs["Fac"])
+    nt.links.new(n_ramp.outputs["Color"], n_mix.inputs["Fac"])
+    nt.links.new(n_trans.outputs["BSDF"], n_mix.inputs[1])
+    nt.links.new(n_emit.outputs["Emission"], n_mix.inputs[2])
+    nt.links.new(n_mix.outputs["Shader"], n_out.inputs["Surface"])
+
+    if hasattr(mat, "surface_render_method"):
+        mat.surface_render_method = "BLENDED"
+    elif hasattr(mat, "blend_method"):
+        mat.blend_method = "BLEND"
+    return mat
+
+
 def make_decal_material(
     name: str,
     image_path: str,
@@ -319,7 +430,6 @@ def make_decal_material(
     use_alpha: bool = False,
     roughness: float = 0.45,
 ) -> bpy.types.Material:
-    """Create crisp textured material from a PIL-generated PNG decal."""
     if name in bpy.data.materials:
         return bpy.data.materials[name]
     mat = bpy.data.materials.new(name=name)
@@ -364,7 +474,7 @@ def make_decal_material(
 
 
 # ============================================================================
-# PYTHON 2.5D CHARACTER CARD OBJECT (GROUND-ANCHORED, LIT & SHADOW-CASTING)
+# 2.5D HERO & UNIFIED BEAN-HEAD NPC CARDS (GROUND-ANCHORED AT FEET Z=0)
 # ============================================================================
 
 def create_character_card(
@@ -372,10 +482,10 @@ def create_character_card(
     height_m: float,
     initial_png_path: str,
     ambient_tint: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-) -> Tuple[bpy.types.Object, bpy.types.ShaderNodeTexImage, bpy.types.ShaderNodeMix]:
-    """Create a 3D vertical character plane with origin anchored EXACTLY at the feet baseline (y=478/520)."""
+    col: Optional[bpy.types.Collection] = None,
+) -> Tuple[bpy.types.Object, bpy.types.ShaderNodeTexImage, Any]:
+    """Create 3D vertical 2.5D character card anchored precisely at feet baseline (y=478/520)."""
     width_m = height_m * (240.0 / 520.0)
-    # Foot contact in 240x520 canvas is at 478px from top => 42px (8.077%) above bottom edge!
     z_bottom = -height_m * (42.0 / 520.0)
     z_top = z_bottom + height_m
     hw = width_m * 0.5
@@ -391,10 +501,8 @@ def create_character_card(
     mesh.update()
 
     obj = bpy.data.objects.new(f"Char_{char_id}", mesh)
-    bpy.context.collection.objects.link(obj)
+    (col or bpy.context.collection).objects.link(obj)
 
-    # Hybrid Lit + Stylized Character Card Shader:
-    # Preserves crisp 2.5D ink & colors while reacting naturally to scene lighting & casting real 3D shadows!
     mat = bpy.data.materials.new(name=f"CharMat_{char_id}")
     mat.use_nodes = True
     nt = mat.node_tree
@@ -407,18 +515,16 @@ def create_character_card(
     if os.path.exists(initial_png_path):
         n_tex.image = bpy.data.images.load(initial_png_path, check_existing=True)
 
-    # Dynamic scene tint/exposure multiplier (e.g., cold blue shadow vs bright golden spotlight in Rjukan!)
     n_tint, _, tint_a, tint_b, tint_res = make_mix_rgba(nt, "MULTIPLY", 1.0, name="SceneLightTint")
     tint_b.default_value = (*ambient_tint, 1.0)
 
-    # Principled diffuse response so real directional/spot lights hit the character card cleanly
     n_bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
-    set_in(n_bsdf, "Roughness", 0.82)
-    set_in(n_bsdf, "Specular IOR Level", 0.15)
+    set_in(n_bsdf, "Roughness", 0.85)
+    set_in(n_bsdf, "Specular IOR Level", 0.10)
     n_s2r = nt.nodes.new("ShaderNodeShaderToRGB")
 
-    # Mix 72% crisp stylized tinted sprite + 28% live scene directional lighting
-    _, _, lit_a, lit_b, lit_res = make_mix_rgba(nt, "MIX", 0.28)
+    # 80% crisp stylized sprite (protects dark outlines!) + 20% live directional shading
+    _, _, lit_a, lit_b, lit_res = make_mix_rgba(nt, "MIX", 0.20)
 
     n_emit = nt.nodes.new("ShaderNodeEmission")
     n_emit.inputs["Strength"].default_value = 1.0
@@ -438,7 +544,7 @@ def create_character_card(
     nt.links.new(n_alpha_mix.outputs["Shader"], n_out.inputs["Surface"])
 
     if hasattr(mat, "surface_render_method"):
-        mat.surface_render_method = "DITHERED"  # Dithered alpha casts crisp real-time 3D shadows in EEVEE Next!
+        mat.surface_render_method = "DITHERED"
     elif hasattr(mat, "blend_method"):
         mat.blend_method = "HASHED"
     if hasattr(mat, "shadow_method"):
@@ -449,7 +555,7 @@ def create_character_card(
 
 
 # ============================================================================
-# GEOMETRY & CAMERA HELPERS
+# GEOMETRY, WORLD & CAMERA HELPERS
 # ============================================================================
 
 def add_box(
@@ -458,12 +564,20 @@ def add_box(
     scale: Tuple[float, float, float],
     mat: bpy.types.Material,
     rot: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    bevel: float = 0.0,
+    col: Optional[bpy.types.Collection] = None,
 ) -> bpy.types.Object:
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=loc, rotation=rot)
     obj = bpy.context.active_object
     obj.name = name
     obj.scale = scale
+    if bevel > 0.0:
+        mod = obj.modifiers.new(name="Bevel", type="BEVEL")
+        mod.width = bevel
+        mod.segments = 2
     obj.data.materials.append(mat)
+    if col is not None:
+        link_to_collection(obj, col)
     return obj
 
 
@@ -475,11 +589,14 @@ def add_cylinder(
     mat: bpy.types.Material,
     rot: Tuple[float, float, float] = (0.0, 0.0, 0.0),
     verts: int = 16,
+    col: Optional[bpy.types.Collection] = None,
 ) -> bpy.types.Object:
     bpy.ops.mesh.primitive_cylinder_add(vertices=verts, radius=radius, depth=depth, location=loc, rotation=rot)
     obj = bpy.context.active_object
     obj.name = name
     obj.data.materials.append(mat)
+    if col is not None:
+        link_to_collection(obj, col)
     return obj
 
 
@@ -489,13 +606,16 @@ def add_sphere(
     radius: float,
     mat: bpy.types.Material,
     scale: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-    segments: int = 18,
+    segments: int = 16,
+    col: Optional[bpy.types.Collection] = None,
 ) -> bpy.types.Object:
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=segments, ring_count=12, radius=radius, location=loc)
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=segments, ring_count=10, radius=radius, location=loc)
     obj = bpy.context.active_object
     obj.name = name
     obj.scale = scale
     obj.data.materials.append(mat)
+    if col is not None:
+        link_to_collection(obj, col)
     return obj
 
 
@@ -506,53 +626,25 @@ def add_decal_plane(
     height: float,
     rot: Tuple[float, float, float],
     mat: bpy.types.Material,
+    col: Optional[bpy.types.Collection] = None,
 ) -> bpy.types.Object:
     bpy.ops.mesh.primitive_plane_add(size=1.0, location=loc, rotation=rot)
     obj = bpy.context.active_object
     obj.name = name
     obj.scale = (width, height, 1.0)
     obj.data.materials.append(mat)
+    if col is not None:
+        link_to_collection(obj, col)
     return obj
-
-
-def add_stylized_npc(
-    name: str,
-    loc: Tuple[float, float, float],
-    coat_mat: bpy.types.Material,
-    skin_mat: bpy.types.Material,
-    hat_mat: bpy.types.Material,
-    dark_mat: bpy.types.Material,
-    scale: float = 1.0,
-) -> bpy.types.Object:
-    """Create lightweight mid-poly stylized animated background NPC (parented to an empty root at feet Z=0)."""
-    root = bpy.data.objects.new(name, None)
-    root.location = loc
-    bpy.context.collection.objects.link(root)
-
-    # Legs
-    for sx in (-0.11, 0.11):
-        leg = add_cylinder(f"{name}_leg_{sx:+.2f}", (sx * scale, 0, 0.36 * scale), 0.045 * scale, 0.72 * scale, dark_mat, verts=8)
-        leg.parent = root
-    # Torso capsule/cylinder
-    body = add_cylinder(f"{name}_body", (0, 0, 0.98 * scale), 0.22 * scale, 0.64 * scale, coat_mat, verts=12)
-    body.parent = root
-    # Head sphere
-    head = add_sphere(f"{name}_head", (0, 0, 1.48 * scale), 0.19 * scale, skin_mat, segments=12)
-    head.parent = root
-    # Hat/hair dome
-    hat = add_sphere(f"{name}_hat", (0, 0, 1.56 * scale), 0.20 * scale, hat_mat, scale=(1.0, 1.0, 0.72), segments=12)
-    hat.parent = root
-    return root
 
 
 def setup_world_sky(
     zenith_color: Tuple[float, float, float],
     horizon_color: Tuple[float, float, float],
     strength: float = 0.8,
-    haze_density: float = 0.004,
+    haze_density: float = 0.003,
     haze_color: Tuple[float, float, float] = (0.55, 0.72, 0.90),
 ) -> bpy.types.World:
-    """Set stylized gradient sky + optional volumetric atmospheric haze for 3D depth."""
     world = bpy.data.worlds.new("StoryWorld")
     bpy.context.scene.world = world
     world.use_nodes = True
@@ -584,7 +676,6 @@ def setup_world_sky(
         n_vol.inputs["Density"].default_value = haze_density
         n_vol.inputs["Anisotropy"].default_value = 0.55
         nt.links.new(n_vol.outputs["Volume"], n_out.inputs["Volume"])
-
     return world
 
 
@@ -594,7 +685,6 @@ def point_camera_at(cam_obj: bpy.types.Object, pos: Tuple[float, float, float], 
     if direction.length < 1e-5:
         direction = Vector((0.0, 1.0, 0.0))
     rot_quat = direction.to_track_quat("-Z", "Y")
-    # Apply intentional Dutch-angle roll around camera local forward Z axis
     roll_quat = Euler((0.0, 0.0, math.radians(roll_deg)), "XYZ").to_quaternion()
     cam_obj.rotation_mode = "QUATERNION"
     cam_obj.rotation_quaternion = rot_quat @ roll_quat

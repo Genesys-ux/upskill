@@ -60,21 +60,30 @@ jobs:
           done
           test -x "$HOME/blender/blender"
 
-      - name: Install system FFmpeg & fonts
+      - name: Install system FFmpeg, Xvfb, Mesa OpenGL/EGL & fonts
         run: |
           sudo rm -f /etc/apt/sources.list.d/microsoft* || true
           sudo apt-get update -qq || true
-          sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-dejavu-core
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-dejavu-core xvfb libegl1 libegl-mesa0 libgbm1 libglx-mesa0 libopengl0 libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 libxrandr2 libxcursor1 libxinerama1
 
       - name: Install Python dependencies
         run: |
           pip install --quiet pillow numpy scipy edge-tts resvg-py
 
-      - name: Build decals, 75s master audio, lip-sync & smoke-test FFmpeg
+      - name: Build decals, 75s master audio, smoke-test FFmpeg & run 3D Raycast/Collision Validator
         run: |
           python assets/build_decals.py
           python audio/build_audio.py
           python render_pipeline.py --smoke-test-ffmpeg
+          python render_pipeline.py --validate-scenes --blender "$HOME/blender/blender"
+
+      - name: Upload 9-Beat Diagnostic Audit Sheet (Instant Pre-Flight Visual Check)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-preflight-diagnostic-9frames
+          path: build/outputs/diagnostic/*
+          retention-days: 7
 
       - name: Upload prepared audio & decals
         uses: actions/upload-artifact@v4

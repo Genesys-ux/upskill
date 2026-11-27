@@ -233,6 +233,77 @@ def assemble_from_shards(quality: str = "preview_720p") -> None:
         print("[Assemble] Saved 30-shard contact sheet:", sheet_path, flush=True)
 
 
+def validate_all_scenes(blender_bin: str = "blender") -> None:
+    """Run automated Blender raycast, collision, anti-flick & 9-keyframe exposure diagnostic BEFORE launching 30 runners."""
+    sprites_root = os.path.join(BUILD_DIR, "sprites_validate")
+    diag_dir = os.path.join(BUILD_DIR, "outputs", "diagnostic")
+    os.makedirs(diag_dir, exist_ok=True)
+
+    # Render ONLY the 3 diagnostic beat frames per scene + unified 2.5D NPCs (~3 seconds total!)
+    beat_frames = {
+        "diomede": [0, 15, 350, 605],
+        "rjukan": [750, 840, 1040, 1300],
+        "baarle": [1470, 1715, 1950, 2160],
+    }
+    for sname, flist in beat_frames.items():
+        sdir = os.path.join(sprites_root, sname)
+        for f in flist:
+            render_character_sprites(scene_name=sname, start_frame=f, end_frame=f + 1, out_root=sdir, scale=1.1, workers=os.cpu_count() or 4)
+        assert os.path.isdir(sdir)
+
+    val_script = os.path.join(PROJECT_ROOT, "blender_scenes", "validator.py")
+    cmd = [
+        blender_bin,
+        "--background",
+        "--factory-startup",
+        "--python-exit-code",
+        "1",
+        "--python",
+        val_script,
+        "--",
+        "--sprites-root",
+        sprites_root,
+        "--out-dir",
+        diag_dir,
+    ]
+    env = os.environ.copy()
+    if platform.system() == "Linux":
+        env.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+        env.setdefault("MESA_GL_VERSION_OVERRIDE", "4.5")
+        env.setdefault("MESA_GLSL_VERSION_OVERRIDE", "450")
+        env.setdefault("GALLIUM_DRIVER", "llvmpipe")
+        if shutil.which("xvfb-run") and not env.get("DISPLAY"):
+            cmd = ["xvfb-run", "-a", "--server-args=-screen 0 1280x720x24"] + cmd
+
+    print("[Validator] Launching pre-flight 3D raycast & 9-beat audit:", " ".join(cmd), flush=True)
+    subprocess.run(cmd, check=True, env=env)
+
+    # Stitch 3x3 diagnostic contact sheet so user & engineer can visually verify every fix immediately!
+    manifest = os.path.join(diag_dir, "diagnostic_manifest.txt")
+    if os.path.exists(manifest):
+        rows_data = []
+        with open(manifest, "r", encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.strip().split("|")
+                if len(parts) == 3 and os.path.exists(parts[0]):
+                    rows_data.append((parts[0], parts[1], float(parts[2])))
+        if rows_data:
+            cols, rows = 3, 3
+            tw, th = 360, 640
+            sheet = Image.new("RGB", (cols * tw, rows * th + 56), (18, 18, 28))
+            draw = ImageDraw.Draw(sheet)
+            draw.text((18, 16), "BUMI LAGI NGE-BUG! v2 — Pre-Render Raycast & 9-Beat Diagnostic Audit (PASSED)", fill=(140, 245, 200))
+            for idx, (png_p, lbl, lum) in enumerate(rows_data[:9]):
+                r, c = divmod(idx, cols)
+                im = Image.open(png_p).convert("RGB").resize((tw, th), Image.Resampling.LANCZOS)
+                sheet.paste(im, (c * tw, 56 + r * th))
+                draw.rectangle([c * tw + 6, 56 + r * th + 6, c * tw + tw - 6, 56 + r * th + 34], fill=(14, 16, 26))
+                draw.text((c * tw + 12, 56 + r * th + 13), f"{lbl} [lum={lum:.2f}]", fill=(240, 248, 255))
+            out_sheet = os.path.join(diag_dir, "v2_diagnostic_9frames.jpg")
+            sheet.save(out_sheet, quality=90)
+            print("[Validator] Saved 9-beat diagnostic contact sheet:", out_sheet, flush=True)
+
+
 def smoke_test_ffmpeg() -> None:
     """1-second pre-flight FFmpeg test run in Job 1 so encoding syntax is verified BEFORE 30 runners launch."""
     tmp_dir = os.path.join(BUILD_DIR, "_smoke")
@@ -251,6 +322,7 @@ def main() -> None:
     parser.add_argument("--shard", type=int, default=None, help="Render single shard index 0..29")
     parser.add_argument("--assemble-from-shards", action="store_true", help="Assemble all 30 shards into 4 clips + full 75s video")
     parser.add_argument("--smoke-test-ffmpeg", action="store_true", help="Verify FFmpeg muxing in 1 second")
+    parser.add_argument("--validate-scenes", action="store_true", help="Run Blender raycast, collision & 9-beat exposure validator")
     parser.add_argument("--quality", default="preview_720p", choices=["preview_720p", "full_1080p"])
     parser.add_argument("--samples", type=int, default=8)
     parser.add_argument("--blender", default="blender")
@@ -258,6 +330,8 @@ def main() -> None:
 
     if args.smoke_test_ffmpeg:
         smoke_test_ffmpeg()
+    elif args.validate_scenes:
+        validate_all_scenes(blender_bin=args.blender)
     elif args.shard is not None:
         render_shard(args.shard, quality=args.quality, samples=args.samples, blender_bin=args.blender)
     elif args.assemble_from_shards:

@@ -1,4 +1,4 @@
-"""Render camera-yaw-synced Python 2.5D Free-Rig character RGBA sequences for Blender 3D integration."""
+"""Render camera-yaw-synced Python 2.5D Free-Rig hero + unified 2.5D bean-head NPC RGBA sprites for Blender."""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +13,7 @@ sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "characters"))
 
 from animation.storyboard import get_characters_at_frame
+from characters.npc_generator import render_scene_npc_sprites
 from project_config import AUDIO_DIR, BUILD_DIR, FPS
 
 from arka_character import ArkaCharacter
@@ -51,11 +52,11 @@ def render_character_sprites(
     scene_name: str,
     start_frame: int,
     end_frame: int,
-    scale: float = 2.0,
+    scale: float = 1.65,
     workers: int = 4,
     out_root: Optional[str] = None,
 ) -> str:
-    """Render RGBA PNG image sequences for every character in scene_name over [start_frame, end_frame)."""
+    """Render RGBA PNG image sequences for hero characters AND unified 2.5D bean-head NPCs."""
     base_dir = out_root or os.path.join(BUILD_DIR, "sprites", scene_name)
     lipsync = load_lipsync()
     char_ids = SCENE_CHARS[scene_name]
@@ -64,13 +65,14 @@ def render_character_sprites(
     for cid in char_ids:
         os.makedirs(os.path.join(base_dir, cid), exist_ok=True)
 
+    # Render unified 2.5D bean-head NPCs for this scene (identical studio style to hero characters!)
+    render_scene_npc_sprites(scene_name, os.path.join(base_dir, "npcs"), scale=min(1.3, scale))
+
     jobs: List[Tuple[str, int, Dict[str, Any], str]] = []
     for f in range(start_frame, end_frame):
         states = get_characters_at_frame(scene_name, f, lipsync)
         for cid in char_ids:
             st = states[cid]
-            # Blender Image Sequence uses 1-based frame index matching scene frame (frame_0001.png -> Blender frame 1)
-            # We save using 0-based file numbering and set Blender image_user.frame_offset cleanly!
             out_png = os.path.join(base_dir, cid, f"frame_{f:04d}.png")
             if os.path.exists(out_png) and os.path.getsize(out_png) > 200:
                 continue
@@ -81,7 +83,7 @@ def render_character_sprites(
         instances[cid].save_frame(out_png, frame=f, fps=FPS, **rk)
 
     if jobs:
-        print(f"[Sprites] Rendering {len(jobs)} character frames for '{scene_name}' ({start_frame}..{end_frame - 1})...")
+        print(f"[Sprites] Rendering {len(jobs)} hero frames + unified 2.5D NPCs for '{scene_name}' ({start_frame}..{end_frame - 1})...")
         if workers > 1:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 list(pool.map(_run_one, jobs))
@@ -93,11 +95,11 @@ def render_character_sprites(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render camera-synced 2.5D character RGBA sprites for Blender.")
+    parser = argparse.ArgumentParser(description="Render camera-synced 2.5D hero & NPC sprites for Blender.")
     parser.add_argument("--scene", required=True, choices=["diomede", "rjukan", "baarle"])
     parser.add_argument("--start", type=int, required=True)
     parser.add_argument("--end", type=int, required=True)
-    parser.add_argument("--scale", type=float, default=2.0)
+    parser.add_argument("--scale", type=float, default=1.65)
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
     render_character_sprites(args.scene, args.start, args.end, scale=args.scale, workers=args.workers)
