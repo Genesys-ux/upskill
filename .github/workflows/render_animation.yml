@@ -31,7 +31,7 @@ env:
 jobs:
   prepare_assets:
     name: "1. Build Audio, Lip-Sync, Decals, Cache Blender & Smoke-Test FFmpeg"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -62,8 +62,9 @@ jobs:
 
       - name: Install system FFmpeg & fonts
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          sudo rm -f /etc/apt/sources.list.d/microsoft* || true
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-dejavu-core
 
       - name: Install Python dependencies
         run: |
@@ -88,7 +89,7 @@ jobs:
   render_30_shards:
     name: "2. Render Shard #${{ matrix.shard }}/29"
     needs: prepare_assets
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -115,8 +116,9 @@ jobs:
 
       - name: Install Xvfb, Mesa OpenGL/EGL & FFmpeg
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb libegl1 libegl-mesa0 libgbm1 libglx-mesa0 libopengl0 libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 libxrandr2 libxcursor1 libxinerama1 ffmpeg
+          sudo rm -f /etc/apt/sources.list.d/microsoft* || true
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq --no-install-recommends xvfb libegl1 libegl-mesa0 libgbm1 libglx-mesa0 libopengl0 libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 libxrandr2 libxcursor1 libxinerama1 ffmpeg
           if [ ! -x "$HOME/blender/blender" ]; then
             mkdir -p "$HOME/blender"
             for url in $BLENDER_URLS; do
@@ -150,7 +152,7 @@ jobs:
   assemble_outputs:
     name: "3. Assemble 4 Preview Clips + Full 75s Video + 30 Keyframes"
     needs: [prepare_assets, render_30_shards]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -160,8 +162,9 @@ jobs:
 
       - name: Install FFmpeg & Pillow
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+          sudo rm -f /etc/apt/sources.list.d/microsoft* || true
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg
           pip install --quiet pillow
 
       - name: Download audio & all 30 rendered shards
