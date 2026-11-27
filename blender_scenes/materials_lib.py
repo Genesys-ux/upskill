@@ -67,21 +67,26 @@ def configure_render_eevee(
         ee.use_motion_blur = use_motion_blur
     if hasattr(ee, "motion_blur_shutter"):
         ee.motion_blur_shutter = 0.42
+    if hasattr(ee, "motion_blur_steps"):
+        ee.motion_blur_steps = 1
     if hasattr(ee, "use_volumetric_shadows"):
-        ee.use_volumetric_shadows = True
+        ee.use_volumetric_shadows = False
     if hasattr(ee, "volumetric_tile_size"):
-        ee.volumetric_tile_size = "4"
+        ee.volumetric_tile_size = "8"
     if hasattr(ee, "volumetric_samples"):
-        ee.volumetric_samples = 48
+        ee.volumetric_samples = 20
     if hasattr(ee, "volumetric_end"):
         ee.volumetric_end = 135.0
+    if hasattr(ee, "shadow_resolution_scale"):
+        ee.shadow_resolution_scale = 0.65 if width <= 720 else 0.85
     if hasattr(ee, "use_bloom"):
         ee.use_bloom = True
         ee.bloom_threshold = 1.15
         ee.bloom_intensity = 0.14
     if hasattr(ee, "use_raytracing"):
-        # Disable heavy software raytracing on CPU llvmpipe for fast crisp EEVEE stylized rendering
         ee.use_raytracing = False
+    if hasattr(scene.render, "use_persistent_data"):
+        scene.render.use_persistent_data = True
 
     # Rich vibrant color management
     scene.view_settings.view_transform = "AgX" if "AgX" in [

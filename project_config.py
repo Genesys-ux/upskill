@@ -73,15 +73,20 @@ PREVIEW_CLIPS: List[Dict[str, Any]] = [
     },
 ]
 
-# Full 75s parallel render chunks (5 x 15s = 75s)
-FULL_CHUNKS: List[Dict[str, Any]] = [
-    {"id": "part_01_diomede_a", "scene": "diomede", "start_frame": 0, "end_frame": 450},
-    {"id": "part_02_diomede_b", "scene": "diomede", "start_frame": 450, "end_frame": 750},
-    {"id": "part_03_rjukan_a", "scene": "rjukan", "start_frame": 750, "end_frame": 1110},
-    {"id": "part_04_rjukan_b", "scene": "rjukan", "start_frame": 1110, "end_frame": 1470},
-    {"id": "part_05_baarle_a", "scene": "baarle", "start_frame": 1470, "end_frame": 1860},
-    {"id": "part_06_baarle_b", "scene": "baarle", "start_frame": 1860, "end_frame": 2250},
-]
+# 30 parallel shards aligned cleanly to the 3 Blender worlds (no shard loads 2 scenes!):
+# - World 1 (diomede, 0..750):    10 shards x 75 frames = 750 frames
+# - World 2 (rjukan,  750..1470): 10 shards x 72 frames = 720 frames
+# - World 3 (baarle,  1470..2250): 10 shards x 78 frames = 780 frames
+SHARDS_30: List[Dict[str, Any]] = []
+for _i in range(10):
+    SHARDS_30.append({"shard": _i, "id": f"shard_{_i:02d}", "scene": "diomede", "start_frame": _i * 75, "end_frame": (_i + 1) * 75})
+for _i in range(10):
+    SHARDS_30.append({"shard": 10 + _i, "id": f"shard_{10 + _i:02d}", "scene": "rjukan", "start_frame": 750 + _i * 72, "end_frame": 750 + (_i + 1) * 72})
+for _i in range(10):
+    SHARDS_30.append({"shard": 20 + _i, "id": f"shard_{20 + _i:02d}", "scene": "baarle", "start_frame": 1470 + _i * 78, "end_frame": 1470 + (_i + 1) * 78})
+
+# Legacy chunk aliases
+FULL_CHUNKS: List[Dict[str, Any]] = SHARDS_30
 
 # Character physical heights in meters (matches cast lineup proportions)
 CHAR_HEIGHTS_M: Dict[str, float] = {

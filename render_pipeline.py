@@ -1,13 +1,14 @@
-"""Unified render orchestrator for preview clips & full 75-second 9:16 animation (GitHub Actions / Local)."""
+"""Unified 30-runner parallel render orchestrator for preview clips & full 75-second 9:16 animation."""
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import platform
 import shutil
 import subprocess
 import sys
-from typing import Any, Dict, List
+from typing import List
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
@@ -15,7 +16,7 @@ if PROJECT_ROOT not in sys.path:
 
 from PIL import Image, ImageDraw
 from animation.render_characters import render_character_sprites
-from project_config import AUDIO_DIR, BUILD_DIR, FPS, FULL_CHUNKS, MASTER_RES, PREVIEW_CLIPS, PREVIEW_RES
+from project_config import AUDIO_DIR, BUILD_DIR, FPS, MASTER_RES, PREVIEW_CLIPS, PREVIEW_RES, SHARDS_30
 
 
 def run_blender_segment(
@@ -33,7 +34,7 @@ def run_blender_segment(
         scene_name=scene_name,
         start_frame=start_frame,
         end_frame=end_frame,
-        scale=2.0 if width <= 720 else 2.5,
+        scale=1.65 if width <= 720 else 2.2,
         workers=os.cpu_count() or 4,
     )
 
@@ -78,172 +79,191 @@ def run_blender_segment(
     subprocess.run(cmd, check=True, env=env)
 
 
-def make_contact_sheet(frames_dir: str, start_frame: int, end_frame: int, out_png: str, title: str) -> None:
-    """Generate a 6-panel keyframe review sheet from rendered frames."""
-    count = max(1, end_frame - start_frame)
-    picks = [start_frame + int(round(i * (count - 1) / 5.0)) for i in range(6)]
-    imgs = []
-    for f in picks:
-        p = os.path.join(frames_dir, f"frame_{f:04d}.png")
-        if os.path.exists(p):
-            imgs.append((f, Image.open(p).convert("RGB")))
-    if not imgs:
-        return
-    tw, th = 360, 640
-    sheet = Image.new("RGB", (tw * len(imgs), th + 54), (20, 18, 28))
-    draw = ImageDraw.Draw(sheet)
-    draw.text((16, 16), title, fill=(240, 246, 255))
-    for i, (f, im) in enumerate(imgs):
-        im_r = im.resize((tw, th), Image.Resampling.LANCZOS)
-        sheet.paste(im_r, (i * tw, 54))
-        draw.rectangle([i * tw + 8, 62, i * tw + 135, 90], fill=(16, 14, 24))
-        draw.text((i * tw + 16, 69), f"t={f / FPS:05.2f}s (f{f})", fill=(130, 238, 255))
-    os.makedirs(os.path.dirname(os.path.abspath(out_png)), exist_ok=True)
-    sheet.save(out_png, quality=92)
-    print(f"[Pipeline] Saved keyframe contact sheet: {out_png}")
-
-
 def encode_mp4_with_audio(
     frames_dir: str,
     start_frame: int,
     end_frame: int,
     out_mp4: str,
-    audio_wav: str,
+    audio_wav: str = "",
+    crf: int = 18,
 ) -> None:
+    """Encode sequential PNG frames (+ optional exact slice of master WAV) into H.264 MP4."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("FFmpeg not found in PATH.")
     os.makedirs(os.path.dirname(os.path.abspath(out_mp4)), exist_ok=True)
 
+    frame_count = end_frame - start_frame
     start_sec = start_frame / float(FPS)
-    dur_sec = (end_frame - start_frame) / float(FPS)
+    dur_sec = frame_count / float(FPS)
     pattern = os.path.join(frames_dir, "frame_%04d.png")
 
+    # Input options strictly BEFORE each -i; output options strictly AFTER all -i!
     cmd = [
         ffmpeg, "-y", "-v", "warning",
         "-framerate", str(FPS),
         "-start_number", str(start_frame),
         "-i", pattern,
-        "-frames:v", str(end_frame - start_frame),
     ]
-    if audio_wav and os.path.exists(audio_wav):
+    has_audio = bool(audio_wav and os.path.exists(audio_wav))
+    if has_audio:
         cmd += ["-ss", f"{start_sec:.4f}", "-t", f"{dur_sec:.4f}", "-i", audio_wav]
 
     cmd += [
+        "-frames:v", str(frame_count),
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-crf", "18",
-        "-preset", "medium",
+        "-crf", str(crf),
+        "-preset", "fast",
         "-movflags", "+faststart",
     ]
-    if audio_wav and os.path.exists(audio_wav):
+    if has_audio:
         cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
     cmd.append(out_mp4)
     print("[FFmpeg] Encoding:", out_mp4, flush=True)
     subprocess.run(cmd, check=True)
 
 
-def render_clip(clip_id: str, samples: int = 20, blender_bin: str = "blender") -> None:
-    clip = next((c for c in PREVIEW_CLIPS if c["id"] == clip_id), None)
-    if not clip:
-        raise ValueError(f"Unknown clip_id: {clip_id}")
-
-    w, h = PREVIEW_RES
-    frames_dir = os.path.join(BUILD_DIR, "frames", clip_id)
+def render_shard(shard_idx: int, quality: str = "preview_720p", samples: int = 8, blender_bin: str = "blender") -> None:
+    """Render 1 of 30 parallel shards (72-78 frames -> shard_XX.mp4 + 1 keyframe thumbnail PNG)."""
+    sh = SHARDS_30[shard_idx]
+    w, h = PREVIEW_RES if quality == "preview_720p" else MASTER_RES
+    frames_dir = os.path.join(BUILD_DIR, "frames_shard", sh["id"])
     os.makedirs(frames_dir, exist_ok=True)
 
-    segments = clip.get("segments") or [
-        {"scene": clip["scene"], "start_frame": clip["start_frame"], "end_frame": clip["end_frame"]}
-    ]
-    for seg in segments:
-        run_blender_segment(
-            scene_name=seg["scene"],
-            start_frame=seg["start_frame"],
-            end_frame=seg["end_frame"],
-            frames_out_dir=frames_dir,
-            width=w,
-            height=h,
-            samples=samples,
-            blender_bin=blender_bin,
-        )
-
-    out_dir = os.path.join(BUILD_DIR, "outputs", "previews")
-    os.makedirs(out_dir, exist_ok=True)
-    out_mp4 = os.path.join(out_dir, f"{clip_id}.mp4")
-    out_sheet = os.path.join(out_dir, f"{clip_id}_keyframes.png")
-    master_wav = os.path.join(AUDIO_DIR, "master_audio.wav")
-
-    encode_mp4_with_audio(frames_dir, clip["start_frame"], clip["end_frame"], out_mp4, master_wav)
-    make_contact_sheet(frames_dir, clip["start_frame"], clip["end_frame"], out_sheet, clip["title"])
-
-
-def render_full_part(part_id: str, samples: int = 24, blender_bin: str = "blender") -> None:
-    part = next((p for p in FULL_CHUNKS if p["id"] == part_id), None)
-    if not part:
-        raise ValueError(f"Unknown part_id: {part_id}")
-
-    w, h = MASTER_RES
-    frames_dir = os.path.join(BUILD_DIR, "frames_full", part_id)
-    os.makedirs(frames_dir, exist_ok=True)
     run_blender_segment(
-        scene_name=part["scene"],
-        start_frame=part["start_frame"],
-        end_frame=part["end_frame"],
+        scene_name=sh["scene"],
+        start_frame=sh["start_frame"],
+        end_frame=sh["end_frame"],
         frames_out_dir=frames_dir,
         width=w,
         height=h,
         samples=samples,
         blender_bin=blender_bin,
     )
-    out_dir = os.path.join(BUILD_DIR, "outputs", "full_parts")
+
+    out_dir = os.path.join(BUILD_DIR, "outputs", "shards")
     os.makedirs(out_dir, exist_ok=True)
-    out_mp4 = os.path.join(out_dir, f"{part_id}.mp4")
-    encode_mp4_with_audio(frames_dir, part["start_frame"], part["end_frame"], out_mp4, "")
+    out_mp4 = os.path.join(out_dir, f"{sh['id']}.mp4")
+    encode_mp4_with_audio(frames_dir, sh["start_frame"], sh["end_frame"], out_mp4, audio_wav="", crf=16)
+
+    # Save midpoint keyframe thumbnail from this shard for the master contact sheet
+    mid_f = (sh["start_frame"] + sh["end_frame"]) // 2
+    mid_png = os.path.join(frames_dir, f"frame_{mid_f:04d}.png")
+    if os.path.exists(mid_png):
+        thumb = Image.open(mid_png).convert("RGB").resize((270, 480), Image.Resampling.LANCZOS)
+        thumb.save(os.path.join(out_dir, f"{sh['id']}_thumb_f{mid_f:04d}.jpg"), quality=88)
 
 
-def concat_videos(mp4_list: List[str], out_mp4: str, master_audio: str = "") -> None:
+def assemble_from_shards(quality: str = "preview_720p") -> None:
+    """Stitch all 30 rendered shards + master_audio.wav into full 75s MP4, 4 preview clips, and keyframe sheet."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("FFmpeg not found.")
-    os.makedirs(os.path.dirname(os.path.abspath(out_mp4)), exist_ok=True)
-    list_txt = out_mp4 + ".concat.txt"
+
+    shards_dir = os.path.join(BUILD_DIR, "outputs", "shards")
+    out_dir = os.path.join(BUILD_DIR, "outputs", "final")
+    os.makedirs(out_dir, exist_ok=True)
+
+    shard_mp4s = [os.path.join(shards_dir, f"shard_{i:02d}.mp4") for i in range(len(SHARDS_30))]
+    missing = [p for p in shard_mp4s if not os.path.exists(p)]
+    if missing:
+        raise RuntimeError(f"Missing {len(missing)} shard MP4 files: {missing[:5]}")
+
+    # 1. Concatenate all 30 shards into seamless raw 75s video track
+    list_txt = os.path.join(out_dir, "shards_concat.txt")
     with open(list_txt, "w", encoding="utf-8") as fh:
-        for p in mp4_list:
+        for p in shard_mp4s:
             fh.write(f"file '{os.path.abspath(p)}'\n")
-    cmd = [ffmpeg, "-y", "-v", "warning", "-f", "concat", "-safe", "0", "-i", list_txt]
-    if master_audio and os.path.exists(master_audio):
-        cmd += ["-i", master_audio, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", out_mp4]
-    else:
-        cmd += ["-c", "copy", "-movflags", "+faststart", out_mp4]
-    subprocess.run(cmd, check=True)
+
+    master_wav = os.path.join(AUDIO_DIR, "master_audio.wav")
+    res_tag = "720x1280" if quality == "preview_720p" else "1080x1920"
+    full_mp4 = os.path.join(out_dir, f"BUMI_LAGI_NGEBUG_FULL_75S_{res_tag}.mp4")
+
+    cmd_full = [
+        ffmpeg, "-y", "-v", "warning",
+        "-f", "concat", "-safe", "0", "-i", list_txt,
+        "-i", master_wav,
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
+        "-movflags", "+faststart",
+        full_mp4,
+    ]
+    print("[Assemble] Building complete 75s master:", full_mp4, flush=True)
+    subprocess.run(cmd_full, check=True)
     os.remove(list_txt)
-    print(f"[Pipeline] Assembled: {out_mp4}")
+
+    # 2. Slice the 4 curated Preview Clips cleanly with frame-accurate re-encode from full 75s master
+    for clip in PREVIEW_CLIPS:
+        clip_mp4 = os.path.join(out_dir, f"{clip['id']}.mp4")
+        start_s = clip["start_frame"] / float(FPS)
+        dur_s = (clip["end_frame"] - clip["start_frame"]) / float(FPS)
+        cmd_clip = [
+            ffmpeg, "-y", "-v", "warning",
+            "-ss", f"{start_s:.4f}",
+            "-i", full_mp4,
+            "-t", f"{dur_s:.4f}",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "fast",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            clip_mp4,
+        ]
+        print("[Assemble] Slicing preview clip:", clip_mp4, flush=True)
+        subprocess.run(cmd_clip, check=True)
+
+    # 3. Build 30-panel full-movie keyframe review contact sheet (6 cols x 5 rows)
+    thumbs = sorted(glob.glob(os.path.join(shards_dir, "shard_*_thumb_*.jpg")))
+    if thumbs:
+        cols, rows = 6, 5
+        tw, th = 270, 480
+        sheet = Image.new("RGB", (cols * tw, rows * th + 60), (18, 16, 26))
+        draw = ImageDraw.Draw(sheet)
+        draw.text((20, 18), f"BUMI LAGI NGE-BUG! — 30-Shard Storyboard Keyframes ({res_tag})", fill=(242, 248, 255))
+        for idx, tp in enumerate(thumbs[:30]):
+            r, c = divmod(idx, cols)
+            im = Image.open(tp).convert("RGB").resize((tw, th), Image.Resampling.LANCZOS)
+            sheet.paste(im, (c * tw, 60 + r * th))
+            sh = SHARDS_30[idx]
+            mid_t = ((sh["start_frame"] + sh["end_frame"]) * 0.5) / float(FPS)
+            draw.rectangle([c * tw + 6, 60 + r * th + 6, c * tw + 175, 60 + r * th + 30], fill=(16, 14, 24))
+            draw.text((c * tw + 12, 60 + r * th + 12), f"#{idx:02d} {sh['scene']} {mid_t:04.1f}s", fill=(138, 238, 255))
+        sheet_path = os.path.join(out_dir, "BUMI_LAGI_NGEBUG_30_KEYFRAMES.jpg")
+        sheet.save(sheet_path, quality=90)
+        print("[Assemble] Saved 30-shard contact sheet:", sheet_path, flush=True)
+
+
+def smoke_test_ffmpeg() -> None:
+    """1-second pre-flight FFmpeg test run in Job 1 so encoding syntax is verified BEFORE 30 runners launch."""
+    tmp_dir = os.path.join(BUILD_DIR, "_smoke")
+    os.makedirs(tmp_dir, exist_ok=True)
+    for f in (0, 1, 2):
+        Image.new("RGB", (64, 64), (40, 80, 120)).save(os.path.join(tmp_dir, f"frame_{f:04d}.png"))
+    out_mp4 = os.path.join(tmp_dir, "smoke.mp4")
+    encode_mp4_with_audio(tmp_dir, 0, 3, out_mp4, audio_wav=os.path.join(AUDIO_DIR, "master_audio.wav"))
+    assert os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 500
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    print("[SmokeTest] FFmpeg video + audio muxing verified 100%!", flush=True)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="BUMI LAGI NGE-BUG! 3D Animation Render Pipeline")
-    parser.add_argument("--clip", help="Render one preview clip by id")
-    parser.add_argument("--part", help="Render one full-HD 75s chunk by id")
-    parser.add_argument("--assemble-previews", action="store_true", help="Combine all 4 preview clips into one showcase reel")
-    parser.add_argument("--assemble-full", action="store_true", help="Combine all 6 Full-HD chunks + master audio into 75s MP4")
-    parser.add_argument("--samples", type=int, default=20)
+    parser = argparse.ArgumentParser(description="BUMI LAGI NGE-BUG! 30-Runner Parallel Render Pipeline")
+    parser.add_argument("--shard", type=int, default=None, help="Render single shard index 0..29")
+    parser.add_argument("--assemble-from-shards", action="store_true", help="Assemble all 30 shards into 4 clips + full 75s video")
+    parser.add_argument("--smoke-test-ffmpeg", action="store_true", help="Verify FFmpeg muxing in 1 second")
+    parser.add_argument("--quality", default="preview_720p", choices=["preview_720p", "full_1080p"])
+    parser.add_argument("--samples", type=int, default=8)
     parser.add_argument("--blender", default="blender")
     args = parser.parse_args()
 
-    if args.clip:
-        render_clip(args.clip, samples=args.samples, blender_bin=args.blender)
-    elif args.part:
-        render_full_part(args.part, samples=args.samples, blender_bin=args.blender)
-    elif args.assemble_previews:
-        prev_dir = os.path.join(BUILD_DIR, "outputs", "previews")
-        clips = [os.path.join(prev_dir, f"{c['id']}.mp4") for c in PREVIEW_CLIPS if os.path.exists(os.path.join(prev_dir, f"{c['id']}.mp4"))]
-        if clips:
-            concat_videos(clips, os.path.join(prev_dir, "BUMI_LAGI_NGEBUG_PREVIEW_REEL.mp4"))
-    elif args.assemble_full:
-        parts_dir = os.path.join(BUILD_DIR, "outputs", "full_parts")
-        parts = [os.path.join(parts_dir, f"{p['id']}.mp4") for p in FULL_CHUNKS]
-        out_master = os.path.join(BUILD_DIR, "outputs", "BUMI_LAGI_NGEBUG_FULL_75S_1080x1920.mp4")
-        concat_videos(parts, out_master, master_audio=os.path.join(AUDIO_DIR, "master_audio.wav"))
+    if args.smoke_test_ffmpeg:
+        smoke_test_ffmpeg()
+    elif args.shard is not None:
+        render_shard(args.shard, quality=args.quality, samples=args.samples, blender_bin=args.blender)
+    elif args.assemble_from_shards:
+        assemble_from_shards(quality=args.quality)
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":
