@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+build/
+audio/master_audio.wav
+audio/lipsync_curves.json
+audio/stems/*.wav
+.DS_Store
+Thumbs.db

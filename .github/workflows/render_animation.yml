@@ -1,0 +1,262 @@
+name: Render 3D Animation — Bumi Lagi Nge-Bug!
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      render_mode:
+        description: "Mode render: 4 Preview Clips cepat (720x1280) atau Full 75 Detik HD (1080x1920)"
+        required: true
+        default: "preview_clips"
+        type: choice
+        options:
+          - preview_clips
+          - full_75s
+      eevee_samples:
+        description: "Jumlah EEVEE Next samples (16-32)"
+        required: false
+        default: "20"
+        type: string
+
+env:
+  BLENDER_VERSION: "4.2.3"
+  BLENDER_URL: "https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz"
+
+jobs:
+  prepare_assets:
+    name: "1. Build Audio VO, SFX, Lip-Sync & Decals"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system FFmpeg & fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+
+      - name: Install Python dependencies
+        run: |
+          pip install --quiet pillow numpy scipy edge-tts resvg-py
+
+      - name: Build crisp PIL texture decals & 75s master audio + lip-sync curves
+        run: |
+          python assets/build_decals.py
+          python audio/build_audio.py
+
+      - name: Upload prepared audio & decals
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-audio-decals
+          path: |
+            audio/master_audio.wav
+            audio/lipsync_curves.json
+            assets/decals/*.png
+          retention-days: 7
+
+  render_preview_clips:
+    name: "2. Render Preview (${{ matrix.clip_id }})"
+    needs: prepare_assets
+    if: ${{ github.event_name == 'push' || inputs.render_mode == 'preview_clips' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        clip_id:
+          - clip_01_diomede_hook
+          - clip_02_es_retak_ke_rjukan
+          - clip_03_godray_ke_baarle
+          - clip_04_baarle_komedi_penutup
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download prepared audio & decals
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-audio-decals
+          path: .
+
+      - name: Cache Blender ${{ env.BLENDER_VERSION }} LTS
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Install Blender, Xvfb, Mesa OpenGL & FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 ffmpeg
+          if [ ! -x "$HOME/blender/blender" ]; then
+            mkdir -p "$HOME/blender"
+            curl -fsSL "$BLENDER_URL" | tar -xJ --strip-components=1 -C "$HOME/blender"
+          fi
+          "$HOME/blender/blender" --version
+
+      - name: Install Python character engine dependencies
+        run: |
+          pip install --quiet pillow numpy resvg-py
+
+      - name: Render 3D Preview Clip (${{ matrix.clip_id }})
+        run: |
+          python render_pipeline.py \
+            --clip "${{ matrix.clip_id }}" \
+            --samples "${{ inputs.eevee_samples || '20' }}" \
+            --blender "$HOME/blender/blender"
+
+      - name: Upload Preview Clip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-${{ matrix.clip_id }}
+          path: |
+            build/outputs/previews/${{ matrix.clip_id }}.mp4
+            build/outputs/previews/${{ matrix.clip_id }}_keyframes.png
+          retention-days: 14
+
+  package_preview_reel:
+    name: "3. Package All 4 Preview Clips & Showcase Reel"
+    needs: render_preview_clips
+    if: ${{ always() && needs.render_preview_clips.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install FFmpeg & Pillow
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install --quiet pillow
+
+      - name: Download all 4 preview clips
+        uses: actions/download-artifact@v4
+        with:
+          pattern: preview-clip_*
+          merge-multiple: true
+          path: build/outputs/previews
+
+      - name: Assemble combined preview showcase reel
+        run: |
+          python render_pipeline.py --assemble-previews
+          ls -lh build/outputs/previews/
+
+      - name: Upload Complete Preview Bundle (4 Clips + Reel + Keyframe Sheets)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bumi-ngebug-preview-clips
+          path: build/outputs/previews/*
+          retention-days: 30
+
+  render_full_75s_chunks:
+    name: "2. Full HD Chunk (${{ matrix.part_id }})"
+    needs: prepare_assets
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.render_mode == 'full_75s' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part_id:
+          - part_01_diomede_a
+          - part_02_diomede_b
+          - part_03_rjukan_a
+          - part_04_rjukan_b
+          - part_05_baarle_a
+          - part_06_baarle_b
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download prepared audio & decals
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-audio-decals
+          path: .
+
+      - name: Cache Blender ${{ env.BLENDER_VERSION }} LTS
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: blender-${{ env.BLENDER_VERSION }}-linux-x64
+
+      - name: Install Blender, Xvfb, Mesa OpenGL & FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libgl1-mesa-dri libglu1-mesa libxi6 libxrender1 libxxf86vm1 libxfixes3 libxkbcommon0 libsm6 ffmpeg
+          if [ ! -x "$HOME/blender/blender" ]; then
+            mkdir -p "$HOME/blender"
+            curl -fsSL "$BLENDER_URL" | tar -xJ --strip-components=1 -C "$HOME/blender"
+          fi
+
+      - name: Install Python character engine dependencies
+        run: |
+          pip install --quiet pillow numpy resvg-py
+
+      - name: Render Full HD 1080x1920 Chunk (${{ matrix.part_id }})
+        run: |
+          python render_pipeline.py \
+            --part "${{ matrix.part_id }}" \
+            --samples "${{ inputs.eevee_samples || '24' }}" \
+            --blender "$HOME/blender/blender"
+
+      - name: Upload Full HD Chunk
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-${{ matrix.part_id }}
+          path: build/outputs/full_parts/${{ matrix.part_id }}.mp4
+          retention-days: 7
+
+  assemble_full_75s_master:
+    name: "3. Assemble Final 75s Master Video (1080x1920 + Audio)"
+    needs: [prepare_assets, render_full_75s_chunks]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.render_mode == 'full_75s' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install FFmpeg & Pillow
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install --quiet pillow
+
+      - name: Download audio & all 6 Full HD chunks
+        uses: actions/download-artifact@v4
+        with:
+          name: prepared-audio-decals
+          path: .
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: full-part_*
+          merge-multiple: true
+          path: build/outputs/full_parts
+
+      - name: Stitch complete 75-second 1080x1920 Master MP4
+        run: |
+          python render_pipeline.py --assemble-full
+          ls -lh build/outputs/
+
+      - name: Upload Final 75s Master Video
+        uses: actions/upload-artifact@v4
+        with:
+          name: bumi-ngebug-full-75s-master
+          path: build/outputs/BUMI_LAGI_NGEBUG_FULL_75S_1080x1920.mp4
+          retention-days: 30
